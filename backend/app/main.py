@@ -4,6 +4,7 @@
 后续阶段会在这里挂上 /upload（入库）与 /ask（问答）两条核心管线。
 部署改造：lifespan 启动 hook + CORS 环境变量，让后端可零改造上 PaaS。
 """
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -53,8 +54,13 @@ def _auto_seed() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动时执行一次；yield 之后是关闭逻辑（这里无）
-    _auto_seed()
+    # 关键：seed 放到后台线程异步执行，绝不能阻塞 uvicorn 启动。
+    # 原因：lifespan 阶段是同步阻塞的，seed 完成前 uvicorn 不会 listen 端口；
+    # 一旦 seed 耗时超过 PaaS healthcheck 窗口（Railway 默认 30s），
+    # 容器会被判 unhealthy 而重启，造成"永远起不来"。
+    # 用 asyncio.to_thread 把同步的 _auto_seed 跑到独立线程，
+    # uvicorn 立刻 yield → 端口开始 listen → /health 立即可访问。
+    asyncio.create_task(asyncio.to_thread(_auto_seed))
     yield
 
 
@@ -91,4 +97,7 @@ app.include_router(documents_router, prefix="/api")
 def health():
     # 探活接口顺手暴露配置就绪状态，方便排查。
     # 注意：这里只回显「是否配置」，绝不回显密钥明文。
-    return {"status": "ok", "api_key_set": bool(settings.zhipu_api_key)}
+    return {
+        "status": "ok",
+        "api_key_set": bool(settings.zhipu_api_key),
+    }
