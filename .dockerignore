@@ -1,0 +1,22 @@
+# Docker 构建时排除这些文件（不影响 Git）
+# 作用类似 .gitignore，但只对 Docker 构建生效
+.git
+.gitignore
+.workbuddy
+README.md
+
+# 后端
+backend/.env
+backend/.venv
+backend/__pycache__
+backend/**/__pycache__
+backend/chroma_db
+
+# 前端（Dockerfile 只构建后端）
+frontend
+frontend/**
+
+# 部署元数据（Railway 自己会读，但不应进镜像）
+Procfile
+railway.json
+nixpacks.toml

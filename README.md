@@ -227,12 +227,14 @@ curl -X POST http://127.0.0.1:8000/api/ask \
 
 ## 🚀 部署（拆分部署：Railway 后端 + Vercel 前端）
 
-> 已配套准备好所有部署文件：`Procfile` / `railway.json` / `nixpacks.toml`（后端）+ `frontend/.env.example`（前端）。GitHub 推送后即可一键部署。
+> 已配套准备好所有部署文件：`Dockerfile` / `.dockerignore` / `railway.json`（后端 Docker 化）+ `frontend/.env.example`（前端）。GitHub 推送后即可一键部署。
+>
+> **为什么用 Docker 而非 nixpacks**：nixpacks 在 Python 3.12 上踩了三个连环坑——默认无 pip、ensurepip 被 PEP 668 拦、装 `python312Packages.pip` 触发 cffi 编译失败。Dockerfile 用官方 `python:3.12-slim` 直接 `pip install`，零依赖、零编译、零兼容问题。详见 commit 历史。
 
-### 后端：Railway
+### 后端：Railway（Docker 模式）
 
 1. 登录 [railway.app](https://railway.app/) → `New Project` → `Deploy from GitHub Repo` → 选 `campus-interview-rag`
-2. Railway 会自动识别 `nixpacks.toml` 并安装 Python 3.12 依赖
+2. Railway 会自动识别 `Dockerfile` 并开始构建（`railway.json` 里已配置 `builder: DOCKERFILE`）
 3. 在 `Variables` 标签里配置以下环境变量（**`ZHIPU_API_KEY` 必填**，其余可选）：
 
    | 变量名 | 必填 | 示例值 | 说明 |
@@ -263,7 +265,7 @@ curl -X POST http://127.0.0.1:8000/api/ask \
 
 ### 关键提醒
 
-- ⚠️ **Python 必须 3.12**：`nixpacks.toml` 已显式锁死 `python312`，**不要**用 3.13（`chroma-hnswlib` 无 cp313 wheel）
+- ⚠️ **Python 必须 3.12**：`Dockerfile` 锁死 `python:3.12-slim`，**不要**用 3.13（`chroma-hnswlib` 无 cp313 wheel）
 - ⚠️ **Chroma 数据临时性**：Railway 容器重启 `chroma_db/` 会被清空，但 `main.py` 的 `lifespan` hook 会在启动时**自动从 `sample_interview.md` 重新灌入 50 条基础题库**（已被 ingest 过的真实数据不会被覆盖）
 - ⚠️ **API Key 替换**：演示用 key `dev-rag-2026` 是给前端 UI 默认填的，**生产请改成你自己的强 key**
 
