@@ -1,0 +1,31 @@
+# ── 依赖 ───────────────────────────────
+node_modules/
+backend/.venv/
+__pycache__/
+*.pyc
+
+# ── 密钥与本地配置（绝不进仓库）──
+.env
+backend/.env
+*.local
+
+# ── 向量库持久化数据 ──────────────────
+chroma_db/
+
+# ── 构建产物 / 日志 ───────────────────
+dist/
+build/
+*.log
+
+# ── 系统与编辑器 ─────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ── WorkBuddy 项目私有数据（开发日志/记忆，不进仓库）──
+.workbuddy/
+
+# ── 前端运行临时缓存 ──
+vite.config.js.timestamp-*.mjs
+*.timestamp-*.mjs
