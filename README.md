@@ -225,27 +225,50 @@ curl -X POST http://127.0.0.1:8000/api/ask \
 
 ---
 
-## 🚀 部署（拆分部署：Railway 后端 + Vercel 前端）
+## 🚀 部署（拆分部署：Render 后端 + Vercel 前端）
 
-> 已配套准备好所有部署文件：`Dockerfile` / `.dockerignore` / `railway.json`（后端 Docker 化）+ `frontend/.env.example`（前端）。GitHub 推送后即可一键部署。
+> 已配套准备好所有部署文件：`Dockerfile` / `.dockerignore` / `backend/start.py`（后端 Docker 化）+ `frontend/.env.example`（前端）。GitHub 推送后即可一键部署。
 >
-> **为什么用 Docker 而非 nixpacks**：nixpacks 在 Python 3.12 上踩了三个连环坑——默认无 pip、ensurepip 被 PEP 668 拦、装 `python312Packages.pip` 触发 cffi 编译失败。Dockerfile 用官方 `python:3.12-slim` 直接 `pip install`，零依赖、零编译、零兼容问题。详见 commit 历史。
+> **为什么用 Docker**：`start.py` 直接 `os.getenv('PORT')` 启动 uvicorn，完全绕开 shell 变量展开；Dockerfile 锁 `python:3.12-slim` 避开 `chroma-hnswlib` 的 cp313 wheel 兼容问题。
+>
+> **为什么用 Render 而非 Railway**：Railway Docker 模式在 `Create container` 阶段会插入一个 `cd $WORKDIR` 包装器，但其实现是直接 `exec("cd", ...)`（不走 shell），导致 `cd not found` 错误反复出现。这是 Railway 平台级 bug，无法通过 Dockerfile / startCommand 绕过。Render 的 Docker 部署用原生 `docker run`，不会插入任何包装器，Dockerfile 直接复用即可。详见 commit 历史。
 
-### 后端：Railway（Docker 模式）
+### 后端：Render（Docker 模式）
 
-1. 登录 [railway.app](https://railway.app/) → `New Project` → `Deploy from GitHub Repo` → 选 `campus-interview-rag`
-2. Railway 会自动识别 `Dockerfile` 并开始构建（`railway.json` 里已配置 `builder: DOCKERFILE`）
-3. 在 `Variables` 标签里配置以下环境变量（**`ZHIPU_API_KEY` 必填**，其余可选）：
+1. 登录 [render.com](https://render.com/)（**用 GitHub 账号**登录，可直接授权仓库访问）
+2. 右上角 `New +` → `Web Service`
+3. 在 `Connect a repository` 找到 `campus-interview-rag` 仓库 → `Connect`
+4. 配置 Web Service 字段：
 
-   | 变量名 | 必填 | 示例值 | 说明 |
-   |---|---|---|---|
-   | `ZHIPU_API_KEY` | ✅ | `00a673b6...` | 智谱开放平台 API Key |
-   | `API_KEYS` | ✅ | `dev-rag-2026` | 客户端 API Key（逗号分隔多个） |
-   | `RATE_LIMIT_PER_MINUTE` | | `30` | 单 IP 每分钟最大请求数 |
-   | `ALLOWED_ORIGINS` | | `https://xxx.vercel.app` | 跨域白名单（前端部署完再填） |
-   | `GLM_MODEL` | | `glm-4-flash` | LLM 模型名 |
+   | 字段 | 值 | 说明 |
+   |---|---|---|
+   | **Name** | `campus-interview-rag` | 服务名，影响默认域名 |
+   | **Region** | **`Singapore`** | 离中国最近，跨太平洋延迟最低 |
+   | **Branch** | `main` | 主分支 |
+   | **Runtime** | **`Docker`** | 关键，让 Render 用我们的 Dockerfile |
+   | **Dockerfile Path** | `./Dockerfile` | 默认 |
+   | **Docker Command** | (留空) | 用 Dockerfile 的 `CMD ["python","start.py"]` |
+   | **Plan** | **`Free`** | $0/月，作品集演示够用（15 分钟无访问会休眠） |
 
-4. 部署完成后 Railway 会分配一个域名（如 `campus-interview-rag.up.railway.app`），打开 `https://<域名>/health` 应返回 `{"status":"ok","api_key_set":true}`，并看到 Seed 日志（说明自动灌入了 50 条样例题库）。
+5. 展开 `Advanced` → `Add Environment Variable` 配置 4 个变量（**`ZHIPU_API_KEY` 必填**）：
+
+   | Key | Value |
+   |---|---|
+   | `ZHIPU_API_KEY` | `00a673b656b84ce5a1a33c2c48fdc556.FYoyx9w4OVFXq5p0` |
+   | `API_KEYS` | `dev-rag-2026` |
+   | `RATE_LIMIT_PER_MINUTE` | `30` |
+   | `ALLOWED_ORIGINS` | `*`（先放开，Vercel 部署完再收紧到 Vercel 域名） |
+
+6. **Health Check Path** 设为 `/health`
+
+7. 点底部 **`Create Web Service`** → Render 自动 pull 代码 → 构建 Docker 镜像 → 启动容器（约 3-5 分钟）
+
+8. 部署完成后 Render 会显示域名 `https://campus-interview-rag.onrender.com`（首次访问若遇休眠，需等 30-50 秒冷启动）
+
+9. 验证三件事：
+   - 浏览器开 `https://campus-interview-rag.onrender.com/health` → 应返回 `{"status":"ok","api_key_set":true}`
+   - 浏览器开 `https://campus-interview-rag.onrender.com/docs` → 应看到 Swagger UI
+   - 不带 Key POST `/api/ask` → 应返 401
 
 ### 前端：Vercel
 
@@ -255,18 +278,19 @@ curl -X POST http://127.0.0.1:8000/api/ask \
 
    | 变量名 | 必填 | 值 |
    |---|---|---|
-   | `VITE_API_BASE` | ✅ | `https://campus-interview-rag.up.railway.app`（后端 Railway 域名） |
+   | `VITE_API_BASE` | ✅ | `https://campus-interview-rag.onrender.com`（Render 后端域名） |
 
 4. `Deploy` → 完成后会得到一个 `*.vercel.app` 域名
 
 ### 最后一步：收紧 CORS
 
-回到 Railway 后端 → `Variables` → 把 `ALLOWED_ORIGINS` 改成你 Vercel 的真实域名（多个用逗号分隔），后端会自动重启。
+回到 Render 后端 → `Environment` → 把 `ALLOWED_ORIGINS` 改成你的 Vercel 真实域名（多个用逗号分隔），后端会自动重启。
 
 ### 关键提醒
 
 - ⚠️ **Python 必须 3.12**：`Dockerfile` 锁死 `python:3.12-slim`，**不要**用 3.13（`chroma-hnswlib` 无 cp313 wheel）
-- ⚠️ **Chroma 数据临时性**：Railway 容器重启 `chroma_db/` 会被清空，但 `main.py` 的 `lifespan` hook 会在启动时**自动从 `sample_interview.md` 重新灌入 50 条基础题库**（已被 ingest 过的真实数据不会被覆盖）
+- ⚠️ **Chroma 数据临时性**：Render 容器重启 `chroma_db/` 会被清空，但 `main.py` 的 `lifespan` hook 会在启动时**自动从 `sample_interview.md` 重新灌入 50 条基础题库**（已被 ingest 过的真实数据不会被覆盖）
+- ⚠️ **Render 免费层会休眠**：15 分钟无访问后下一次请求需 30-50 秒冷启动（生产环境用 Starter Plan $7/月可避免）
 - ⚠️ **API Key 替换**：演示用 key `dev-rag-2026` 是给前端 UI 默认填的，**生产请改成你自己的强 key**
 
 ---
