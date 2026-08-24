@@ -24,5 +24,5 @@ COPY backend/ .
 ENV PORT=8000
 EXPOSE 8000
 
-# 用 uvicorn 启动；用 sh -c 是因为要展开 $PORT 环境变量
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# 用 Python 启动脚本读 PORT 环境变量，避免 shell 展开 + Railway 'cd' 包装器的坑
+CMD ["python", "start.py"]
