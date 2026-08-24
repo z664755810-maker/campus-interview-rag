@@ -2,7 +2,12 @@
 
 阶段0 目标：跑通一个最小可运行服务，验证后端骨架与目录结构正确。
 后续阶段会在这里挂上 /upload（入库）与 /ask（问答）两条核心管线。
+部署改造：lifespan 启动 hook + CORS 环境变量，让后端可零改造上 PaaS。
 """
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,13 +16,60 @@ from app.api.documents import router as documents_router
 from app.core.config import settings
 from app.core.security import APIKeyMiddleware, RateLimitMiddleware
 
-app = FastAPI(title="校招面试题库 RAG 系统", version="0.1.0")
 
-# 开发期放开跨域，方便前端（5173）直接调用。
-# 生产环境里你会把 allow_origins 收敛到前端域名白名单，避免被任意站点套用接口。
+def _auto_seed() -> None:
+    """启动时检查 Chroma；若为空，从内置 sample_interview.md 灌一份基础题库。
+
+    为什么需要这个：PaaS（Railway / Render）容器是临时文件系统，
+    重启 chroma_db/ 会被清空。这个 hook 让演示环境开箱即用，
+    已经被 ingest 过的真实数据不会被覆盖。
+    """
+    try:
+        from app.services.vector_store import get_client, COLLECTION_NAME
+
+        client = get_client()
+        try:
+            col = client.get_collection(name=COLLECTION_NAME)
+            if col.count() > 0:
+                print(f"[seed] Chroma 已有 {col.count()} 条数据，跳过自动入库")
+                return
+        except Exception:
+            # collection 不存在时 get_collection 会抛异常，属正常情况
+            pass
+
+        from app.services import ingestion
+
+        sample_path = Path(__file__).resolve().parent.parent / "data" / "sample_interview.md"
+        if not sample_path.exists():
+            print("[seed] 未找到样例题库文件，请通过 /api/documents/upload 上传")
+            return
+        text = sample_path.read_text(encoding="utf-8")
+        n = ingestion.ingest_text(text, source="sample_interview.md")
+        print(f"[seed] 已自动从样例题库灌入 {n} 条（来源 sample_interview.md）")
+    except Exception as e:
+        # seed 失败不能影响服务启动
+        print(f"[seed] 自动入库失败（不影响启动）：{e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动时执行一次；yield 之后是关闭逻辑（这里无）
+    _auto_seed()
+    yield
+
+
+app = FastAPI(
+    title="校招面试题库 RAG 系统",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# CORS：开发期默认放开；生产通过环境变量 ALLOWED_ORIGINS 收敛到具体前端域名。
+# 例：ALLOWED_ORIGINS=https://campus-interview-rag.vercel.app,https://yourdomain.com
+_allowed = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

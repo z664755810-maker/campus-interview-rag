@@ -1,0 +1,14 @@
+# Nixpacks 构建配置：显式锁死 Python 3.12，避开 chroma-hnswlib 在 3.13 上
+# 没有官方预编译 wheel、只能现场编译（且需要 MSVC）这个大坑。
+[phases.setup]
+nixPkgs = ["python312"]
+
+[phases.install]
+cmds = [
+  "cd backend",
+  "python -m pip install --upgrade pip",
+  "pip install -r requirements.txt"
+]
+
+[start]
+cmd = "cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
