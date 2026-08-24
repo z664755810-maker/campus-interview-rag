@@ -1,13 +1,20 @@
-# Nixpacks 构建配置：显式锁死 Python 3.12，避开 chroma-hnswlib 在 3.13 上
-# 没有官方预编译 wheel、只能现场编译（且需要 MSVC）这个大坑。
+# Nixpacks 构建配置
+#
+# 两个核心决策：
+# 1. 锁死 Python 3.12，避开 chroma-hnswlib 在 3.13 上没有官方预编译 wheel、
+#    只能现场编译（且需要 MSVC）这个大坑。
+# 2. 在 nixPkgs 里显式声明 pip 包 + build 阶段 ensurepip 兜底，
+#    避免 "No module named pip" 这个 nixpacks Python 构建的经典坑。
+
 [phases.setup]
-nixPkgs = ["python312"]
+nixPkgs = ["python312", "python312Packages.pip"]
 
 [phases.install]
 cmds = [
   "cd backend",
+  "python -m ensurepip --upgrade",
   "python -m pip install --upgrade pip",
-  "pip install -r requirements.txt"
+  "python -m pip install -r requirements.txt"
 ]
 
 [start]
