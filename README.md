@@ -1,3 +1,14 @@
+---
+title: Campus Interview RAG
+emoji: 📚
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+---
+
 # 校招软件开发面试题库 · RAG 垂直问答系统
 
 > 一个面向「校招软件工程师」面试备考场景的 **检索增强生成（RAG）** 垂直问答系统。
@@ -225,49 +236,42 @@ curl -X POST http://127.0.0.1:8000/api/ask \
 
 ---
 
-## 🚀 部署（拆分部署：Render 后端 + Vercel 前端）
+## 🚀 部署（拆分部署：Hugging Face Spaces 后端 + Vercel 前端）
 
 > 已配套准备好所有部署文件：`Dockerfile` / `.dockerignore` / `backend/start.py`（后端 Docker 化）+ `frontend/.env.example`（前端）。GitHub 推送后即可一键部署。
 >
-> **为什么用 Docker**：`start.py` 直接 `os.getenv('PORT')` 启动 uvicorn，完全绕开 shell 变量展开；Dockerfile 锁 `python:3.12-slim` 避开 `chroma-hnswlib` 的 cp313 wheel 兼容问题。
+> **为什么用 Hugging Face Spaces**：完全免费、不绑卡、只登录 GitHub 即可使用，支持 Docker 部署，我们的 Dockerfile / start.py / .dockerignore / 环境变量全部**零改动直接复用**。
 >
-> **为什么用 Render 而非 Railway**：Railway Docker 模式在 `Create container` 阶段会插入一个 `cd $WORKDIR` 包装器，但其实现是直接 `exec("cd", ...)`（不走 shell），导致 `cd not found` 错误反复出现。这是 Railway 平台级 bug，无法通过 Dockerfile / startCommand 绕过。Render 的 Docker 部署用原生 `docker run`，不会插入任何包装器，Dockerfile 直接复用即可。详见 commit 历史。
+> **为什么用 Docker + `start.py`**：`start.py` 直接 `os.getenv('PORT')` 启动 uvicorn，完全绕开 shell 变量展开；Dockerfile 锁 `python:3.12-slim` 避开 `chroma-hnswlib` 的 cp313 wheel 兼容问题。
 
-### 后端：Render（Docker 模式）
+### 后端：Hugging Face Spaces（Docker Space）
 
-1. 登录 [render.com](https://render.com/)（**用 GitHub 账号**登录，可直接授权仓库访问）
-2. 右上角 `New +` → `Web Service`
-3. 在 `Connect a repository` 找到 `campus-interview-rag` 仓库 → `Connect`
-4. 配置 Web Service 字段：
+1. 登录 [huggingface.co](https://huggingface.co/)（**用 GitHub 账号**登录）
+2. 右上角 `+ New Space`
+3. 填 Space 信息：
+   - **Space name**: `campus-interview-rag`（影响默认域名）
+   - **License**: `MIT`
+   - **SDK**: **`Docker`** ⚠️ 关键
+   - **Docker template**: `Blank`
+   - **Space hardware**: **`CPU basic - free`**（免费够用，2 vCPU + 16GB RAM）
+   - **Visibility**: `Public`（作品集要给招聘方看）
+4. 创建后跳转到 Space 的 `Files` 页面 → 顶部点 **`Add file → Upload files`** 或者 **`Connect to GitHub`**（推荐后者，自动重部署）
+5. **配置环境变量**（关键）：
+   - 左侧 **`Settings`** → **`Variables and secrets`** → **`New variable`** 添加 4 个：
 
-   | 字段 | 值 | 说明 |
+   | Name | Value | Secret? |
    |---|---|---|
-   | **Name** | `campus-interview-rag` | 服务名，影响默认域名 |
-   | **Region** | **`Singapore`** | 离中国最近，跨太平洋延迟最低 |
-   | **Branch** | `main` | 主分支 |
-   | **Runtime** | **`Docker`** | 关键，让 Render 用我们的 Dockerfile |
-   | **Dockerfile Path** | `./Dockerfile` | 默认 |
-   | **Docker Command** | (留空) | 用 Dockerfile 的 `CMD ["python","start.py"]` |
-   | **Plan** | **`Free`** | $0/月，作品集演示够用（15 分钟无访问会休眠） |
+   | `ZHIPU_API_KEY` | `00a673b656b84ce5a1a33c2c48fdc556.FYoyx9w4OVFXq5p0` | ✅ 选 Secret |
+   | `API_KEYS` | `dev-rag-2026` | ❌ |
+   | `RATE_LIMIT_PER_MINUTE` | `30` | ❌ |
+   | `ALLOWED_ORIGINS` | `*`（先放开，Vercel 部署完再收紧） | ❌ |
 
-5. 展开 `Advanced` → `Add Environment Variable` 配置 4 个变量（**`ZHIPU_API_KEY` 必填**）：
+6. 完成后 Space 会自动开始构建 Docker 镜像（**首次约 5-10 分钟**，含 pip install + chromadb 下载）
+7. 部署完成后 HF 会分配域名 `https://<你的用户名>-campus-interview-rag.hf.space`
 
-   | Key | Value |
-   |---|---|
-   | `ZHIPU_API_KEY` | `00a673b656b84ce5a1a33c2c48fdc556.FYoyx9w4OVFXq5p0` |
-   | `API_KEYS` | `dev-rag-2026` |
-   | `RATE_LIMIT_PER_MINUTE` | `30` |
-   | `ALLOWED_ORIGINS` | `*`（先放开，Vercel 部署完再收紧到 Vercel 域名） |
-
-6. **Health Check Path** 设为 `/health`
-
-7. 点底部 **`Create Web Service`** → Render 自动 pull 代码 → 构建 Docker 镜像 → 启动容器（约 3-5 分钟）
-
-8. 部署完成后 Render 会显示域名 `https://campus-interview-rag.onrender.com`（首次访问若遇休眠，需等 30-50 秒冷启动）
-
-9. 验证三件事：
-   - 浏览器开 `https://campus-interview-rag.onrender.com/health` → 应返回 `{"status":"ok","api_key_set":true}`
-   - 浏览器开 `https://campus-interview-rag.onrender.com/docs` → 应看到 Swagger UI
+8. 验证三件事：
+   - 浏览器开 `https://<你的域名>/health` → 应返回 `{"status":"ok","api_key_set":true}`
+   - 浏览器开 `https://<你的域名>/docs` → 应看到 Swagger UI
    - 不带 Key POST `/api/ask` → 应返 401
 
 ### 前端：Vercel
@@ -278,20 +282,21 @@ curl -X POST http://127.0.0.1:8000/api/ask \
 
    | 变量名 | 必填 | 值 |
    |---|---|---|
-   | `VITE_API_BASE` | ✅ | `https://campus-interview-rag.onrender.com`（Render 后端域名） |
+   | `VITE_API_BASE` | ✅ | `https://<你的用户名>-campus-interview-rag.hf.space`（HF Space 域名） |
 
 4. `Deploy` → 完成后会得到一个 `*.vercel.app` 域名
 
 ### 最后一步：收紧 CORS
 
-回到 Render 后端 → `Environment` → 把 `ALLOWED_ORIGINS` 改成你的 Vercel 真实域名（多个用逗号分隔），后端会自动重启。
+回到 HF Space 后端 → `Settings` → `Variables and secrets` → 把 `ALLOWED_ORIGINS` 改成你的 Vercel 真实域名（如 `https://campus-interview-rag.vercel.app`），后端会自动重启生效。
 
 ### 关键提醒
 
 - ⚠️ **Python 必须 3.12**：`Dockerfile` 锁死 `python:3.12-slim`，**不要**用 3.13（`chroma-hnswlib` 无 cp313 wheel）
-- ⚠️ **Chroma 数据临时性**：Render 容器重启 `chroma_db/` 会被清空，但 `main.py` 的 `lifespan` hook 会在启动时**自动从 `sample_interview.md` 重新灌入 50 条基础题库**（已被 ingest 过的真实数据不会被覆盖）
-- ⚠️ **Render 免费层会休眠**：15 分钟无访问后下一次请求需 30-50 秒冷启动（生产环境用 Starter Plan $7/月可避免）
+- ⚠️ **Chroma 数据临时性**：HF Space 容器重启 `chroma_db/` 会被清空，但 `main.py` 的 `lifespan` hook 会在启动时**自动从 `sample_interview.md` 重新灌入 50 条基础题库**（已被 ingest 过的真实数据不会被覆盖）
+- ⚠️ **HF Space 48 小时休眠**：48 小时无访问会进入休眠，下次访问需冷启动（10-30 秒），作品集演示前手动访问一次"唤醒"即可
 - ⚠️ **API Key 替换**：演示用 key `dev-rag-2026` 是给前端 UI 默认填的，**生产请改成你自己的强 key**
+- ⚠️ **Secret 标记**：`ZHIPU_API_KEY` 在 HF Space 的 Variables 列表里**必须勾选 Secret**，否则会公开展示在 Space 页面（Vercel 上同理选 Sensitive）
 
 ---
 
