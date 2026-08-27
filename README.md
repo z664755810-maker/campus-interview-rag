@@ -17,6 +17,16 @@ license: mit
 
 ---
 
+> **👋 招聘方 / 面试官你好**：本作品集采用「**代码优先**」的展示方式。
+>
+> - 📦 **完整代码**就是作品本身：GitHub 仓库包含全部源码、架构图、API 文档、分阶段实现记录
+> - 🛠️ **5 分钟本地跑通**：克隆 → 填密钥 → `uvicorn` 启动 → 浏览器访问 `http://localhost:5173`（步骤见下方「快速开始」）
+> - 🎯 **设计要点**：鉴权中间件、限流、引用溯源机制、自动 seed 等工程化细节在代码注释 + 文档里讲清
+> - ❌ **未做云端部署**：2024 年后主流 PaaS（Render/Railway/HF Spaces 等）要么强制绑卡、要么需要付费订阅；学生作品集以"代码评审"为主要评估形式，因此本项目以本地演示为主
+> - 💼 **如果你想在线看效果**：参考下方「可选部署」章节（需要你提供自己的智谱 API Key 与付费平台账号）
+
+---
+
 ## ✨ 功能特性
 
 - 📥 **文档入库**：上传 `.md / .txt` 面试题文档，自动按「题」切分（保留单题语义完整性）
@@ -116,9 +126,18 @@ project-2/
 
 ---
 
-## 🚀 快速开始
+## 🚀 快速开始（5 分钟本地跑通）
 
-### 1. 后端
+> **如果你只想看效果**：完成下面 ①+②+③ 步，浏览器开 `http://localhost:5173` 即可问答。
+
+### 0. 前置：Python 3.12 + Node.js
+
+- **Python 3.12**（**务必 3.12**——`chroma-hnswlib` 没有 3.13 的官方预编译 wheel）
+  - 推荐用 [uv](https://github.com/astral-sh/uv) 安装：`uv python install 3.12`
+  - 或 Windows：官网下载 `python-3.12.x-amd64.exe`
+- **Node.js 18+**（前端 Vite 需要）
+
+### 1. 后端（Python / FastAPI）
 
 ```bash
 cd backend
@@ -130,22 +149,25 @@ py -V:Astral/CPython3.12.14 -m venv .venv
 # 安装依赖（已锁定 chromadb==1.5.9）
 pip install -r requirements.txt
 
-# 配置密钥：复制 .env.example 为 .env 并填入
+# 配置密钥：复制 .env.example 为 .env 并填入你的智谱 API Key
 cp .env.example .env
-#   ZHIPU_API_KEY=你的智谱Key
+# 编辑 .env，填入：
+#   ZHIPU_API_KEY=你的智谱Key（https://open.bigmodel.cn/ 申请，免费有额度）
 #   API_KEYS=dev-rag-2026        # 演示用客户端 Key
 #   RATE_LIMIT_PER_MINUTE=30
 
 # 灌入样例题库（10 科 50 题），会清空旧 collection 后重灌
 .venv/Scripts/python.exe scripts/reindex.py
 
-# 启动服务
+# 启动服务（默认 http://127.0.0.1:8000）
 .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-启动后访问 `http://127.0.0.1:8000/docs` 可在线调试接口。
+启动后访问 `http://127.0.0.1:8000/docs` 可在线调试接口（Swagger UI）。
 
-### 2. 前端
+### 2. 前端（Vue3 / Vite）
+
+新开一个终端：
 
 ```bash
 cd frontend
@@ -153,9 +175,40 @@ npm install
 npm run dev      # 默认 http://localhost:5173，Vite 已配置 /api 代理到 8000
 ```
 
-打开 `http://localhost:5173`：左侧上传 `.md` 面试题 → 右侧输入问题 → 查看答案与引用卡片。
+打开 `http://localhost:5173`：
+- 左侧上传 `.md/.txt` 面试题文档（自动按题切分向量化）
+- 右侧输入问题 → 查看答案 + **引用溯源卡片**（点击卡片可展开原文）
+- 顶部可设置 API Key（默认 `dev-rag-2026`，与后端 `.env` 一致即可）
+
+### 3. 验证三条核心链路
+
+| 测试 | 操作 | 期望 |
+|---|---|---|
+| 探活 | 浏览器开 `http://127.0.0.1:8000/health` | `{"status":"ok","api_key_set":true}` |
+| 鉴权 | 不带 Key POST `/api/ask` | 返 `401` |
+| 限流 | 同 IP 1 分钟内请求 `/api/ask` 超 30 次 | 返 `429` |
+| 问答 | 前端问"TCP 三次握手的作用" | 看到答案 + 至少 1 张引用卡片 |
 
 ---
+
+## ☁️ 可选部署（云端）
+
+> 2024 年后主流 PaaS（Render / Railway / HF Spaces / Fly.io 等）要么强制绑卡、要么需要付费订阅。本项目以**本地演示**为主，云端部署不是必要项。
+>
+> 如果你有付费平台账号，可以参考下面的方案；**项目本身已 Docker 化**（`Dockerfile` / `start.py` / `.dockerignore` 均已就绪），迁移到任何支持 Docker 的平台几乎零改动。
+
+### Docker 一键打包（任意平台通用）
+
+```bash
+docker build -t campus-interview-rag .
+docker run -p 8000:8000 \
+  -e ZHIPU_API_KEY=你的Key \
+  -e API_KEYS=dev-rag-2026 \
+  -e ALLOWED_ORIGINS=* \
+  campus-interview-rag
+```
+
+启动后访问 `http://localhost:8000/health`，应返回 200。
 
 ## 🔌 API 一览
 
@@ -233,70 +286,6 @@ curl -X POST http://127.0.0.1:8000/api/ask \
 - 支持 PDF / Word 解析（当前仅 `.md/.txt`）
 - 检索召回优化：混合检索（向量 + 关键词 BM25）、重排（rerank）
 - 一键部署 Railway（Python 锁 3.12 + chromadb 1.5.9，本地 Git → GitHub → Railway 自动重部署）
-
----
-
-## 🚀 部署（拆分部署：Hugging Face Spaces 后端 + Vercel 前端）
-
-> 已配套准备好所有部署文件：`Dockerfile` / `.dockerignore` / `backend/start.py`（后端 Docker 化）+ `frontend/.env.example`（前端）。GitHub 推送后即可一键部署。
->
-> **为什么用 Hugging Face Spaces**：完全免费、不绑卡、只登录 GitHub 即可使用，支持 Docker 部署，我们的 Dockerfile / start.py / .dockerignore / 环境变量全部**零改动直接复用**。
->
-> **为什么用 Docker + `start.py`**：`start.py` 直接 `os.getenv('PORT')` 启动 uvicorn，完全绕开 shell 变量展开；Dockerfile 锁 `python:3.12-slim` 避开 `chroma-hnswlib` 的 cp313 wheel 兼容问题。
-
-### 后端：Hugging Face Spaces（Docker Space）
-
-1. 登录 [huggingface.co](https://huggingface.co/)（**用 GitHub 账号**登录）
-2. 右上角 `+ New Space`
-3. 填 Space 信息：
-   - **Space name**: `campus-interview-rag`（影响默认域名）
-   - **License**: `MIT`
-   - **SDK**: **`Docker`** ⚠️ 关键
-   - **Docker template**: `Blank`
-   - **Space hardware**: **`CPU basic - free`**（免费够用，2 vCPU + 16GB RAM）
-   - **Visibility**: `Public`（作品集要给招聘方看）
-4. 创建后跳转到 Space 的 `Files` 页面 → 顶部点 **`Add file → Upload files`** 或者 **`Connect to GitHub`**（推荐后者，自动重部署）
-5. **配置环境变量**（关键）：
-   - 左侧 **`Settings`** → **`Variables and secrets`** → **`New variable`** 添加 4 个：
-
-   | Name | Value | Secret? |
-   |---|---|---|
-   | `ZHIPU_API_KEY` | `00a673b656b84ce5a1a33c2c48fdc556.FYoyx9w4OVFXq5p0` | ✅ 选 Secret |
-   | `API_KEYS` | `dev-rag-2026` | ❌ |
-   | `RATE_LIMIT_PER_MINUTE` | `30` | ❌ |
-   | `ALLOWED_ORIGINS` | `*`（先放开，Vercel 部署完再收紧） | ❌ |
-
-6. 完成后 Space 会自动开始构建 Docker 镜像（**首次约 5-10 分钟**，含 pip install + chromadb 下载）
-7. 部署完成后 HF 会分配域名 `https://<你的用户名>-campus-interview-rag.hf.space`
-
-8. 验证三件事：
-   - 浏览器开 `https://<你的域名>/health` → 应返回 `{"status":"ok","api_key_set":true}`
-   - 浏览器开 `https://<你的域名>/docs` → 应看到 Swagger UI
-   - 不带 Key POST `/api/ask` → 应返 401
-
-### 前端：Vercel
-
-1. 登录 [vercel.com](https://vercel.com/) → `Add New` → `Project` → 选 `campus-interview-rag`
-2. `Root Directory` 设为 `frontend`
-3. 在 `Environment Variables` 添加：
-
-   | 变量名 | 必填 | 值 |
-   |---|---|---|
-   | `VITE_API_BASE` | ✅ | `https://<你的用户名>-campus-interview-rag.hf.space`（HF Space 域名） |
-
-4. `Deploy` → 完成后会得到一个 `*.vercel.app` 域名
-
-### 最后一步：收紧 CORS
-
-回到 HF Space 后端 → `Settings` → `Variables and secrets` → 把 `ALLOWED_ORIGINS` 改成你的 Vercel 真实域名（如 `https://campus-interview-rag.vercel.app`），后端会自动重启生效。
-
-### 关键提醒
-
-- ⚠️ **Python 必须 3.12**：`Dockerfile` 锁死 `python:3.12-slim`，**不要**用 3.13（`chroma-hnswlib` 无 cp313 wheel）
-- ⚠️ **Chroma 数据临时性**：HF Space 容器重启 `chroma_db/` 会被清空，但 `main.py` 的 `lifespan` hook 会在启动时**自动从 `sample_interview.md` 重新灌入 50 条基础题库**（已被 ingest 过的真实数据不会被覆盖）
-- ⚠️ **HF Space 48 小时休眠**：48 小时无访问会进入休眠，下次访问需冷启动（10-30 秒），作品集演示前手动访问一次"唤醒"即可
-- ⚠️ **API Key 替换**：演示用 key `dev-rag-2026` 是给前端 UI 默认填的，**生产请改成你自己的强 key**
-- ⚠️ **Secret 标记**：`ZHIPU_API_KEY` 在 HF Space 的 Variables 列表里**必须勾选 Secret**，否则会公开展示在 Space 页面（Vercel 上同理选 Sensitive）
 
 ---
 
