@@ -12,8 +12,10 @@ load_dotenv()
 
 
 class Settings:
-    # 智谱开放平台 API Key；阶段1/2 才会真正调用 embedding / 生成，阶段0 仅做存在性检查
-    zhipu_api_key: str = os.getenv("ZHIPU_API_KEY", "")
+    # 智谱开放平台 API Key；阶段1/2 才会真正调用 embedding / 生成，阶段0 仅做存在性检查。
+    # 兼容两种常见命名：ZHIPU_API_KEY（官方文档）与 ZHIPUAI_API_KEY（部分教程误写），
+    # 避免因为环境变量名不一致导致 key 读不到、问答功能静默失效。
+    zhipu_api_key: str = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY", "")
 
     # 智谱 LLM 模型名（阶段2 启用，开发期用 flash 控成本；可换 glm-4-plus 提质）
     glm_model: str = os.getenv("GLM_MODEL", "glm-4-flash")
