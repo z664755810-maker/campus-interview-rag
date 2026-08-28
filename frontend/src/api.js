@@ -40,6 +40,8 @@ async function request(path, options = {}) {
     let detail = `请求失败 (${res.status})`
     if (res.status === 401) detail = '未授权：请在右上角填写有效的 API Key'
     else if (res.status === 429) detail = '请求过于频繁，请稍后再试（已触发限流）'
+    else if (res.status === 413) detail = '文件过大，请拆分后再上传'
+    else if (res.status === 415) detail = '不支持的文件格式'
     else {
       const e = await res.json().catch(() => ({}))
       if (e.detail) detail = e.detail
@@ -61,4 +63,21 @@ export async function uploadFile(path, file) {
   const form = new FormData()
   form.append('file', file)
   return request(path, { method: 'POST', body: form })
+}
+
+// 拉取后端「支持哪些格式」的白名单，前后端共用一份，避免两处维护不一致
+export function getFormats() {
+  return request('/api/documents/formats')
+}
+
+// 拉取当前题库真实状态（总片段数 + 来源分布）。
+// 用途：免费层容器重启后 seed 会自动灌示例题，前端必须主动同步一次，
+// 否则显示「已索引 0 段」而实际有数据，会让用户误判系统坏了。
+export function getStats() {
+  return request('/api/documents/stats')
+}
+
+// 一键载入内置示例题库：手边没有现成文件时，点一下就能立刻体验完整链路
+export function loadSample() {
+  return request('/api/documents/load-sample', { method: 'POST' })
 }

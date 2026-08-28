@@ -71,9 +71,105 @@ def parse_markdown(text: str, source: str) -> list[dict]:
     return out
 
 
+def split_generic(text: str, source: str, chunk_size: int = 500, overlap: int = 80) -> list[dict]:
+    """通用兜底切分：给「不是 ### Q 题库排版」的文档（Word 正文 / PDF / 网页 / 表格）用。
+
+    为什么必须要有兜底：
+      parse_markdown 只认 `### Q1.` 结构。你传一份普通 Word 面经，
+      里面根本没有 ### 标记，parse_markdown 会返回空 -> 入库 0 条 -> 提问永远答不上来。
+      这就是「文件类型放开但功能没打通」的典型坑，兜底切分是必需品而非锦上添花。
+
+    策略：按空行分段 -> 累积到 chunk_size 切一片 -> 保留 overlap 字做上下文衔接
+          （overlap 能避免一句话被腰斩在两片里，检索命中率更高）。
+    """
+    # 统一换行，去掉多余空行
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    if not paragraphs:
+        return []
+
+    chunks: list[str] = []
+    buf: list[str] = []
+    buf_len = 0
+
+    for para in paragraphs:
+        # 单段就超过 chunk_size：先按句号再切一刀，避免生成一个超大 chunk
+        if len(para) > chunk_size * 1.5:
+            if buf:
+                chunks.append("\n".join(buf))
+                buf, buf_len = [], 0
+            pieces = _hard_split(para, chunk_size)
+            chunks.extend(pieces)
+            continue
+
+        buf.append(para)
+        buf_len += len(para)
+        if buf_len >= chunk_size:
+            chunks.append("\n".join(buf))
+            # overlap：把上一片尾部的一段内容带进下一片，保住跨片的语义连续性
+            if overlap > 0 and buf:
+                tail = buf[-1]
+                buf = [tail[-overlap:]] if len(tail) > overlap else [tail]
+                buf_len = len(buf[0])
+            else:
+                buf, buf_len = [], 0
+
+    if buf:
+        chunks.append("\n".join(buf))
+
+    out = []
+    for idx, c in enumerate(chunks, start=1):
+        c = c.strip()
+        if not c:
+            continue
+        out.append(
+            {
+                "id": f"{source}__g{idx}",
+                "text": c,
+                "metadata": {
+                    "source": source,
+                    "subject": "通用文档",
+                    "q_index": idx,
+                    "title": _short_title(c),
+                },
+            }
+        )
+    return out
+
+
+def _hard_split(para: str, size: int) -> list[str]:
+    """把超长段落按中文句号/分号硬切成若干片。"""
+    import re
+
+    # 中文句号、问号、感叹号、分号后断句，保留标点
+    sentences = re.split(r"(?<=[。！？；!?;])", para)
+    pieces, cur = [], ""
+    for s in sentences:
+        if len(cur) + len(s) > size and cur:
+            pieces.append(cur.strip())
+            cur = s
+        else:
+            cur += s
+    if cur.strip():
+        pieces.append(cur.strip())
+    return [p for p in pieces if p]
+
+
+def _short_title(chunk: str, limit: int = 24) -> str:
+    """取 chunk 首行前 N 字作标题，方便引用溯源时一眼看出来源片段。"""
+    first = chunk.strip().splitlines()[0] if chunk.strip() else ""
+    first = first.lstrip("#").strip()
+    return (first[:limit] + "…") if len(first) > limit else (first or "片段")
+
+
 def ingest_text(text: str, source: str) -> int:
-    """解析 -> 向量化 -> 写 Chroma，返回入库条数。"""
+    """解析 -> 向量化 -> 写 Chroma，返回入库条数。
+
+    双策略：先按题库结构（### Q）切，切不出来再走通用切分兜底。
+    """
     parsed = parse_markdown(text, source)
+    if not parsed:
+        # 没有 ### Q 结构 —— 普通 Word/PDF/网页/表格文档，用通用切分
+        parsed = split_generic(text, source)
     if not parsed:
         return 0
     # 批量向量化（入库与检索同一模型，坐标同源）

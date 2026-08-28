@@ -1,6 +1,6 @@
 <script setup>
-import { ref } from 'vue'
-import { getApiKey, setApiKey } from './api.js'
+import { ref, onMounted } from 'vue'
+import { getApiKey, setApiKey, getStats } from './api.js'
 import UploadPanel from './components/UploadPanel.vue'
 import ChatPanel from './components/ChatPanel.vue'
 
@@ -9,10 +9,34 @@ import ChatPanel from './components/ChatPanel.vue'
 const uploads = ref([])
 const libraryCount = ref(0)
 
+// onUploaded 按 source 去重：后端是 upsert（幂等覆盖），
+// 若前端无脑累加，重复载入同一份示例题库会让计数虚高，与实际库内条数对不上。
 function onUploaded(payload) {
+  const idx = uploads.value.findIndex((u) => u.source === payload.source)
+  if (idx !== -1) {
+    libraryCount.value -= uploads.value[idx].ingested // 先扣掉旧值
+    uploads.value.splice(idx, 1)
+  }
   uploads.value.unshift(payload)
   libraryCount.value += payload.ingested
 }
+
+// 启动时同步一次真实题库状态。
+// 原因：PaaS 免费层重启会清空数据盘，后端 seed 会自动灌入 50 道示例题；
+// 前端若不主动拉，就会显示「已索引 0 段」而实际有 50 条，误导用户。
+onMounted(async () => {
+  try {
+    const s = await getStats()
+    libraryCount.value = s.count || 0
+    uploads.value = (s.sources || []).map((x) => ({
+      source: x.source,
+      ingested: x.chunks,
+    }))
+  } catch (e) {
+    // 统计接口失败就维持 0，不阻断页面使用
+    console.warn('题库状态拉取失败：', e.message)
+  }
+})
 
 // 阶段4：API Key 设置。key 存 localStorage，统一由 api.js 附加到请求头。
 // 首次进入用演示 key 预填，保证开箱即用；用户可自行改成自己的 key。
