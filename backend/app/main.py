@@ -11,6 +11,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.api import router as api_router
 from app.api.documents import router as documents_router
@@ -101,3 +103,28 @@ def health():
         "status": "ok",
         "api_key_set": bool(settings.zhipu_api_key),
     }
+
+
+# ---- 前端静态托管（同源部署）----
+# 多阶段 Docker build 把前端 dist 拷到了 /app/static。
+# 浏览器访问根路径 / 即看到中文 UI；/api、/health、/docs 仍由 FastAPI 处理。
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+@app.get("/")
+async def serve_index():
+    """根路径返回前端首页（同源部署时，浏览器直接看到中文 UI）。"""
+    index = _STATIC_DIR / "index.html"
+    if index.exists():
+        return FileResponse(index)
+    # 兜底：前端未构建时仍保留后端可访问性
+    return {
+        "message": "前端未构建，请访问 /docs 调试接口，或等待镜像构建完成。",
+        "api": "/api",
+        "health": "/health",
+    }
+
+
+# 仅在静态目录存在时挂载（本地开发若未 build 前端，不影响后端运行）
+if _STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="assets")

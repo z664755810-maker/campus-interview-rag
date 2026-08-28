@@ -12,9 +12,10 @@ backend/__pycache__
 backend/**/__pycache__
 backend/chroma_db
 
-# 前端（Dockerfile 只构建后端）
-frontend
-frontend/**
+# 前端：保留源码进构建上下文（Dockerfile 多阶段会重新 npm install / build）
+# 仅排除本地依赖与构建产物，避免把宿主机 node_modules 带进镜像
+frontend/node_modules
+frontend/dist
 
 # 部署元数据（Railway 自己会读，但不应进镜像）
 Procfile
