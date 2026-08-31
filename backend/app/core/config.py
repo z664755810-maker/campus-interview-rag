@@ -20,6 +20,19 @@ class Settings:
     # 智谱 LLM 模型名（阶段2 启用，开发期用 flash 控成本；可换 glm-4-plus 提质）
     glm_model: str = os.getenv("GLM_MODEL", "glm-4-flash")
 
+    # ── Embedding provider 切换（智谱免费档 embedding 接口持续 429 限流时的备选）──
+    # "zhipu"     : 用智谱 embedding-3（2048 维），需要 ZHIPU_API_KEY
+    # "dashscope" : 用阿里百炼 text-embedding-v3（1024 维），需要 DASHSCOPE_API_KEY
+    # ⚠️ 切换 provider 时务必清空 chroma_db 重灌：不同模型/维度的向量空间不可比，
+    #    混用会让检索结果错乱（看起来能搜但实际命中错题）。
+    embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "zhipu")
+
+    # 阿里百炼 DashScope API Key（embedding 专用，与智谱 chat 的 key 分开）
+    dashscope_api_key: str = os.getenv("DASHSCOPE_API_KEY", "")
+
+    # DashScope embedding 模型名（默认 text-embedding-v3，1024 维）
+    dashscope_embedding_model: str = os.getenv("DASHSCOPE_EMBEDDING_MODEL", "text-embedding-v3")
+
     # Chroma 向量库持久化目录（阶段1 启用，数据落本地磁盘）
     chroma_persist_dir: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 

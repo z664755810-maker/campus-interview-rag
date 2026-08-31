@@ -5,7 +5,7 @@
 也正好对应你完成标准里的「引用溯源」（每条都能回到具体某题）。
 """
 from app.core.config import settings
-from app.services import zhipu
+from app.services import embeddings
 from app.services.vector_store import add_chunks
 
 
@@ -174,7 +174,7 @@ def ingest_text(text: str, source: str) -> int:
         return 0
     # 批量向量化（入库与检索同一模型，坐标同源）
     texts = [p["text"] for p in parsed]
-    vectors = zhipu.embed_texts(texts)
+    vectors = embeddings.embed_texts(texts)
     for p, vec in zip(parsed, vectors):
         p["vector"] = vec
     add_chunks(parsed)

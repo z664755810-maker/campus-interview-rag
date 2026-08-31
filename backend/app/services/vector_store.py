@@ -44,7 +44,7 @@ def search(query: str, top_k: int | None = None, min_score: float | None = None)
     （比如用户问「三大特征」把任何含"三"的题都拉进来——你之前截图里
     出现的「数据库三大范式」「Python 深拷贝」就是这种噪声）。
     """
-    from app.services.zhipu import embed_query
+    from app.services.embeddings import embed_query
 
     top_k = top_k or settings.top_k
     # 0 表示不启用阈值（向后兼容）
