@@ -1,10 +1,10 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { postJson } from '../api.js'
 
 // 对话面板：发 /api/ask，展示答案 + 引用出处卡片。
 // 引用卡片默认折叠原文，点击展开——对应后端返回的 citations（含 [n] 映射元数据）。
-// 带 Key 的请求统一走 api.js。
+// 段 A 改 #1：提问框占满 chat 区域，JS 动态调高度（最少 3 行，最多 8 行）。
 const props = defineProps({ hasLibrary: Boolean })
 
 const question = ref('')
@@ -12,13 +12,26 @@ const loading = ref(false)
 const error = ref('')
 const chats = ref([]) // { question, answer, citations, expanded:[] }
 
+const MIN_ROWS = 3
+const MAX_ROWS = 8
+const LINE_PX = 22 // 与 CSS line-height 对应；用于按行数算高度
+const textareaRef = ref(null)
+
+function autoResize() {
+  const el = textareaRef.value
+  if (!el) return
+  // 先重置到最小再读取 scrollHeight，让"删完字"也能收缩回去
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, MAX_ROWS * LINE_PX) + 'px'
+}
+
 async function send() {
   const q = question.value.trim()
   if (!q || loading.value) return
   loading.value = true
   error.value = ''
   try {
-    const data = await postJson('/api/ask', { query: q, top_k: 3 })
+    const data = await postJson('/api/ask', { query: q, top_k: 5 })
     chats.value.push({
       question: q,
       answer: data.answer,
@@ -26,6 +39,8 @@ async function send() {
       expanded: (data.citations || []).map(() => false),
     })
     question.value = ''
+    await nextTick()
+    autoResize()
   } catch (e) {
     error.value = e.message || '提问出错'
   } finally {
@@ -36,6 +51,21 @@ async function send() {
 function toggle(chat, i) {
   chat.expanded[i] = !chat.expanded[i]
 }
+
+// 快捷键：Enter 发送 / Shift+Enter 换行
+function onKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    send()
+  }
+}
+// 段 B：暴露 fillQuestion 给父组件（专题刷题面板点击"💬 让 RAG 详细讲解"时调用）
+defineExpose({
+  fillQuestion(q) {
+    question.value = q
+    nextTick(() => autoResize())
+  },
+})
 </script>
 
 <template>
@@ -69,10 +99,13 @@ function toggle(chat, i) {
 
     <div class="composer">
       <textarea
+        ref="textareaRef"
         v-model="question"
-        @keydown.enter.exact.prevent="send"
-        placeholder="例如：TCP 三次握手的作用是什么？&#10;（Enter 发送，Shift+Enter 换行）"
-        rows="2"
+        @input="autoResize"
+        @keydown="onKey"
+        :placeholder="`例如：TCP 三次握手的作用是什么？\n支持多行输入（Enter 发送，Shift+Enter 换行）`"
+        :rows="MIN_ROWS"
+        :disabled="loading || !hasLibrary"
       ></textarea>
       <button :disabled="loading || !hasLibrary" @click="send">
         {{ loading ? '生成中…' : '提问' }}
@@ -120,17 +153,28 @@ function toggle(chat, i) {
   color: #adbac7; font-size: 13px; line-height: 1.6; white-space: pre-wrap;
   overflow-x: auto;
 }
-.composer { display: flex; gap: 10px; margin-top: 14px; }
+
+/* 段 A 改 #1：提问框占满 chat 区域，附快捷键提示 */
+.composer {
+  display: flex; gap: 10px; margin-top: 14px;
+  align-items: flex-end; /* 按钮贴底，与动态高度的 textarea 齐平 */
+}
 .composer textarea {
-  flex: 1; resize: none; background: #0d1117; border: 1px solid #30363d;
-  border-radius: 8px; color: #c9d1d9; padding: 10px 12px; font-size: 14px;
-  font-family: inherit; line-height: 1.5;
+  flex: 1; min-height: 70px; max-height: 200px;
+  resize: none; background: #0d1117; border: 1px solid #30363d;
+  border-radius: 8px; color: #c9d1d9; padding: 12px 14px;
+  font-size: 14px; font-family: inherit; line-height: 1.5;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
 }
 .composer textarea:focus { outline: none; border-color: #58a6ff; }
+.composer textarea:disabled { background: #161b22; color: #6e7681; }
 .composer button {
-  align-self: stretch; padding: 0 22px; background: #238636; color: #fff;
+  height: 44px; padding: 0 24px; background: #238636; color: #fff;
   border: none; border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: 600;
+  white-space: nowrap;
 }
 .composer button:disabled { background: #21262d; color: #6e7681; cursor: not-allowed; }
+.composer button:hover:not(:disabled) { background: #2ea043; }
 .err { color: #f85149; font-size: 13px; margin-top: 8px; }
 </style>

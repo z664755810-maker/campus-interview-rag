@@ -24,7 +24,13 @@ class Settings:
     chroma_persist_dir: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 
     # 单次检索返回的片段数 top-k（阶段2 启用）
-    top_k: int = int(os.getenv("TOP_K", "4"))
+    top_k: int = int(os.getenv("TOP_K", "5"))
+
+    # 检索相似度阈值（Chroma 余弦距离：0=完全相同，1=完全不同，2=完全相反）。
+    # 0.5 是经验值：低于它说明「真的相关」，高于它基本是「高频词撞库」（如"三大"）。
+    # 太高 → 把相关题也过滤掉；太低 → 噪声被塞进答案。
+    # 作品集场景下可让用户按 RAG_MIN_SCORE 环境变量微调。
+    min_score: float = float(os.getenv("RAG_MIN_SCORE", "0.5"))
 
     # ── 阶段4 业务加固：鉴权与限流 ───────────────────────────
     # 客户端 API Key（用于 API Key 中间件）。支持配置多个，逗号分隔。

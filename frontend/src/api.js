@@ -1,11 +1,5 @@
 // 统一请求层：自动附加 X-API-Key，并集中翻译鉴权/限流的友好错误提示。
 //
-// 为什么单独抽这一层？
-// 阶段4 起，所有业务接口都需要带 API Key 才能访问。如果让每个组件各自拼
-// 请求头、各自判断 401/429，会出现大量重复代码，改密钥头名也得改多处。
-// 把"带 key 的 HTTP 调用"收口到这一个文件，组件只关心业务数据，符合
-// 工程上的「单一职责 + 关注点分离」。
-//
 // 部署改造：基础地址由 VITE_API_BASE 决定。
 // - 开发环境：留空，默认 /api（Vite 代理到 127.0.0.1:8000）
 // - 生产环境：填线上后端完整地址，如 https://campus-interview-rag.up.railway.app
@@ -38,7 +32,7 @@ async function request(path, options = {}) {
   if (!res.ok) {
     // 集中处理业务加固相关的状态码，给出人话提示
     let detail = `请求失败 (${res.status})`
-    if (res.status === 401) detail = '未授权：请在右上角填写有效的 API Key'
+    if (res.status === 401) detail = '未授权：API Key 无效（请检查配置）'
     else if (res.status === 429) detail = '请求过于频繁，请稍后再试（已触发限流）'
     else if (res.status === 413) detail = '文件过大，请拆分后再上传'
     else if (res.status === 415) detail = '不支持的文件格式'
@@ -59,6 +53,10 @@ export function postJson(path, body) {
   })
 }
 
+export function deleteReq(path) {
+  return request(path, { method: 'DELETE' })
+}
+
 export async function uploadFile(path, file) {
   const form = new FormData()
   form.append('file', file)
@@ -71,8 +69,6 @@ export function getFormats() {
 }
 
 // 拉取当前题库真实状态（总片段数 + 来源分布）。
-// 用途：免费层容器重启后 seed 会自动灌示例题，前端必须主动同步一次，
-// 否则显示「已索引 0 段」而实际有数据，会让用户误判系统坏了。
 export function getStats() {
   return request('/api/documents/stats')
 }
@@ -80,4 +76,31 @@ export function getStats() {
 // 一键载入内置示例题库：手边没有现成文件时，点一下就能立刻体验完整链路
 export function loadSample() {
   return request('/api/documents/load-sample', { method: 'POST' })
+}
+
+// 当前客户端的限流配额状态（段 A 改 #3：API Key 装饰化后，前端只看配额）
+export function getUsage() {
+  return request('/api/usage')
+}
+
+// 按 source 删除某个文档（段 A 改 #2：题库管理）
+export function deleteBySource(source) {
+  // source 可能含中文/点号/空格，必须 encodeURIComponent
+  return deleteReq(`/api/documents/by-source/${encodeURIComponent(source)}`)
+}
+
+// 清空整个题库（需要传 confirm=true）
+export function clearLibrary() {
+  return postJson('/api/documents/clear', { confirm: true })
+}
+
+// 按学科分组列出所有题目（段 B-B2：专题刷题）
+export function getBySubject() {
+  return request('/api/documents/by-subject')
+}
+
+// 随机抽 N 道题（段 B-B3：模拟面试）
+export function getRandom(n = 5, subject = null) {
+  const q = subject ? `?n=${n}&subject=${encodeURIComponent(subject)}` : `?n=${n}`
+  return request(`/api/documents/random${q}`)
 }

@@ -42,8 +42,8 @@ def build_prompt(query: str, contexts: list[dict]) -> tuple[str, list[dict]]:
 
     prompt = f"""你是一个校招软件开发面试辅导助手。请仅根据下面提供的【资料】回答用户的问题，严格遵循以下规则：
 1. 只能使用【资料】中的内容作答，严禁使用你自己的知识或任何外部信息。
-2. 如果【资料】中没有相关信息，请明确回答"资料库中未包含该内容"，不要编造。
-3. 回答时请在相关论断后标注引用，格式为 [1]、[2] 等，对应下方资料的编号。
+2. 重要：判断【资料】是否与用户问题主题相关。如果【资料】与用户问题明显无关（例如用户问 Java，资料全是数据库），请明确回答「资料库中未包含该内容的相关题目」，不要强行拼凑【资料】里不相关的内容去回答。
+3. 回答时请在相关论断后标注引用，格式为 [1]、[2] 等，对应下方资料的编号；无关的【资料】不要引用。
 4. 回答要条理清晰、适合面试备考场景，必要时分点列出要点。
 
 【资料】
@@ -57,12 +57,17 @@ def build_prompt(query: str, contexts: list[dict]) -> tuple[str, list[dict]]:
 
 
 def ask(query: str, top_k: int | None = None) -> dict:
-    """阶段2 主入口：检索 -> 拼 Prompt -> GLM 生成 -> 引用溯源。"""
+    """阶段2 主入口：检索 -> 拼 Prompt -> GLM 生成 -> 引用溯源。
+
+    改进点：
+    - top_k 缺省值上调到 5，给相似度阈值留过滤余量（避免最相关的 1 个被 3 个噪声挤掉）
+    - 检索结果全空时给出明确「资料库中未包含该内容」提示，而非诱导模型编造
+    """
     contexts = search(query, top_k=top_k)
     if not contexts:
         return {
             "query": query,
-            "answer": "资料库为空，请先通过 /api/documents/upload 上传面试题文档。",
+            "answer": "资料库中未包含与该问题相关的内容。请尝试：1) 换一个更具体的提问；2) 在左侧上传对应学科的题库。",
             "citations": [],
         }
     prompt, citations = build_prompt(query, contexts)

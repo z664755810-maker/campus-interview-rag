@@ -16,8 +16,11 @@ from starlette.responses import JSONResponse
 
 from app.core.config import settings
 
-# 不鉴权、不限流的公开路径（探活与 API 文档）
-PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/api/hello"}
+# 鉴权与限流的公开路径（探活、API 文档、配额查询）
+PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/api/hello", "/api/usage"}
+# 不限流的路径（探活、API 文档、配额查询——前两个是开发期常驻，
+# 配额查询是高频轮询，不应消耗自身配额；鉴权仍按需走）
+RATE_LIMIT_EXEMPT = {"/health", "/docs", "/openapi.json", "/redoc", "/api/hello", "/api/usage"}
 
 
 def _extract_bearer(request: Request) -> str | None:
@@ -61,9 +64,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     这是内存实现，足够单机/演示；生产会用 Redis 做分布式限流。
     """
 
+    # 类级单例引用：方便外部接口（GET /api/usage）查询当前 IP 的窗口用量，
+    # 不用在 main.py 里反射 FastAPI 的 middleware stack。
+    _instance: "RateLimitMiddleware | None" = None
+
     def __init__(self, app):
         super().__init__(app)
         self._hits: dict[str, list[float]] = {}
+        RateLimitMiddleware._instance = self
 
     @staticmethod
     def _client_ip(request: Request) -> str:
@@ -74,7 +82,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return request.client.host if request.client else "unknown"
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in PUBLIC_PATHS:
+        if request.url.path in RATE_LIMIT_EXEMPT:
             return await call_next(request)
 
         ip = self._client_ip(request)
@@ -94,3 +102,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         window.append(now)
         return await call_next(request)
+
+    @classmethod
+    def get_usage(cls, client_ip: str) -> dict:
+        """供 /api/usage 接口读取：当前 IP 在 60s 窗口内的请求数与上限。
+
+        返回结构稳定，前端能据此渲染「剩余配额」指示器。
+        """
+        import time as _t
+
+        if cls._instance is None:
+            return {"used": 0, "limit": settings.rate_limit_per_minute, "window_seconds": 60}
+        now = _t.time()
+        window = cls._instance._hits.get(client_ip, [])
+        # 同样清理过期计数，保证 used 与 limit 在同一时窗下对比
+        while window and now - window[0] > 60:
+            window.pop(0)
+        return {
+            "used": len(window),
+            "limit": settings.rate_limit_per_minute,
+            "window_seconds": 60,
+            "remaining": max(0, settings.rate_limit_per_minute - len(window)),
+        }

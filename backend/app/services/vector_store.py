@@ -36,11 +36,20 @@ def add_chunks(chunks: list[dict]):
     )
 
 
-def search(query: str, top_k: int | None = None) -> list[dict]:
-    """检索 top-k 相关片段，返回原文 + 元数据 + 距离（越小越相关）。"""
+def search(query: str, top_k: int | None = None, min_score: float | None = None) -> list[dict]:
+    """检索 top-k 相关片段，可按相似度阈值过滤。
+
+    Chroma 默认余弦距离：0=完全相同，1=完全不同，2=完全相反。
+    阈值 0.5 是经验值：低于它说明「真的相关」，高于它基本是「高频词撞库」
+    （比如用户问「三大特征」把任何含"三"的题都拉进来——你之前截图里
+    出现的「数据库三大范式」「Python 深拷贝」就是这种噪声）。
+    """
     from app.services.zhipu import embed_query
 
     top_k = top_k or settings.top_k
+    # 0 表示不启用阈值（向后兼容）
+    threshold = min_score if min_score is not None else settings.min_score
+
     collection = get_collection()
     q_vec = embed_query(query)
     res = collection.query(
@@ -52,5 +61,9 @@ def search(query: str, top_k: int | None = None) -> list[dict]:
     for doc, meta, dist in zip(
         res["documents"][0], res["metadatas"][0], res["distances"][0]
     ):
+        # 阈值过滤：> threshold 视为不相关，丢弃
+        # 阈值=0 时跳过过滤，行为与之前一致
+        if threshold > 0 and dist > threshold:
+            continue
         out.append({"text": doc, "metadata": meta, "distance": dist})
     return out

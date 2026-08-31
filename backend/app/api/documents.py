@@ -6,8 +6,9 @@
 """
 import os
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Body, HTTPException, UploadFile, File
 from pydantic import BaseModel, field_validator
 
 from app.services import ingestion
@@ -177,3 +178,134 @@ def search_qa(req: SearchRequest):
 def ask_qa(req: AskRequest):
     # 阶段2 核心：RAG 问答。rag_ask 内部完成「检索 -> 拼 Prompt -> GLM 生成 -> 引用溯源」。
     return rag_ask(req.query, top_k=req.top_k)
+
+
+# ─────────────────────────── 题库管理接口（段 A 修 #2）───────────────────────────
+
+
+@router.delete("/documents/by-source/{source:path}")
+def delete_by_source(source: str):
+    """按 source 删除该文档的所有片段。
+
+    业务背景：之前只让加不让删，题库管理形同虚设。
+    - 用 Chroma 的 where={"source": source} 一次性定位该文档的所有 id
+    - 拿不到任何 id 时返回 404（前端能区分"库里有/没有这个文件"）
+    - 路径用 {source:path}，允许 source 含中文/点号/空格
+    """
+    try:
+        col = get_collection(COLLECTION_NAME)
+        existing = col.get(where={"source": source}, include=["metadatas"])
+        ids = existing.get("ids", [])
+        if not ids:
+            raise HTTPException(status_code=404, detail=f"未找到来源为「{source}」的文档")
+        col.delete(ids=ids)
+        return {"deleted_chunks": len(ids), "source": source}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除失败：{e}")
+
+
+@router.post("/documents/clear")
+def clear_library(payload: dict[str, Any] = Body(default_factory=dict)):
+    """清空整个题库。需要 confirm=true 字段二次确认。
+
+    业务背景：「删除」太危险，防止误操作，所以要求调用方显式传 confirm=true
+    才执行。生产里通常还会要求「输入题库名」之类的人工确认，这里为简洁省略。
+    """
+    if not payload.get("confirm"):
+        raise HTTPException(
+            status_code=400,
+            detail="需要 confirm=true 字段才能执行清空操作（防止误删）",
+        )
+    try:
+        col = get_collection(COLLECTION_NAME)
+        existing = col.get(include=[])
+        ids = existing.get("ids", [])
+        if ids:
+            col.delete(ids=ids)
+        return {"deleted_chunks": len(ids), "remaining": 0}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"清空失败：{e}")
+
+
+@router.get("/documents/by-subject")
+def list_by_subject():
+    """按学科（subject）分组列出所有题目，用于「专题刷题」面板。
+
+    返回结构：
+    {
+      "subjects": [
+        {"name": "Java", "count": 12, "questions": [{"q_index": "Q1", "title": "...", "preview": "..."}]},
+        ...
+      ],
+      "total": 50
+    }
+    学科按题数倒序；preview 取题目正文前 80 字，避免响应体过大。
+    """
+    try:
+        col = get_collection(COLLECTION_NAME)
+        total = col.count()
+        if total == 0:
+            return {"subjects": [], "total": 0}
+        # 一次拿全 metadata + document，省得 N+1
+        res = col.get(include=["metadatas", "documents"])
+        groups: dict[str, list[dict]] = {}
+        for doc, meta in zip(res["documents"], res["metadatas"]):
+            meta = meta or {}
+            subject = meta.get("subject") or "未分类"
+            content = doc or ""
+            groups.setdefault(subject, []).append(
+                {
+                    "q_index": meta.get("q_index"),
+                    "title": meta.get("title", ""),
+                    "preview": content[:80] + ("…" if len(content) > 80 else ""),
+                }
+            )
+        # 按题数倒序：重点学科置顶
+        subjects = [
+            {"name": k, "count": len(v), "questions": v}
+            for k, v in sorted(groups.items(), key=lambda x: -len(x[1]))
+        ]
+        return {"subjects": subjects, "total": total}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"按学科分组失败：{e}")
+
+
+@router.get("/documents/random")
+def random_questions(subject: str | None = None, n: int = 5):
+    """随机抽 N 道题，用于「模拟面试」。
+
+    - subject=None：全题库随机；否则按学科过滤
+    - n 默认 5（适合一场迷你模拟面试），上限 20 防止滥用
+    """
+    if n < 1 or n > 20:
+        raise HTTPException(status_code=400, detail="n 需在 1~20 之间")
+    try:
+        col = get_collection(COLLECTION_NAME)
+        total = col.count()
+        if total == 0:
+            return {"questions": [], "total": 0}
+        where = {"subject": subject} if subject else None
+        res = col.get(where=where, include=["metadatas", "documents"])
+        items = []
+        for doc, meta in zip(res["documents"], res["metadatas"]):
+            meta = meta or {}
+            content = doc or ""
+            items.append(
+                {
+                    "subject": meta.get("subject", "未分类"),
+                    "q_index": meta.get("q_index"),
+                    "title": meta.get("title", ""),
+                    "content": content,
+                    "source": meta.get("source", ""),
+                }
+            )
+        import random as _r
+
+        picked = _r.sample(items, min(n, len(items)))
+        return {"questions": picked, "total": total}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"随机抽题失败：{e}")

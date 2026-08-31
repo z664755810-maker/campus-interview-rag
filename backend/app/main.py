@@ -9,7 +9,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -103,6 +103,21 @@ def health():
         "status": "ok",
         "api_key_set": bool(settings.zhipu_api_key),
     }
+
+
+@app.get("/api/usage")
+def usage(request: Request):
+    """当前客户端的限流配额状态（段 A 改 #3：API Key 装饰化）。
+
+    为什么不暴露 API Key 明文：前端不需要「手动改 key」的入口，Key 留在
+    服务端；前端只需知道「我现在还能发多少请求」。这样既展示中间件能力，
+    又不让用户改一个没有意义（GitHub 公开）的字段。
+    """
+    from app.core.security import RateLimitMiddleware
+
+    fwd = request.headers.get("X-Forwarded-For")
+    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
+    return RateLimitMiddleware.get_usage(ip)
 
 
 # ---- 前端静态托管（同源部署）----
