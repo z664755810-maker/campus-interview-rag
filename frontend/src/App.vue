@@ -104,6 +104,19 @@ function forwardToChat(question) {
     }
   }, 50)
 }
+
+// 段 B-修：切到「专题刷题」时强制 reload（onMounted 只触发一次，
+// 用户先停在 chat 等 stats 加载完再切到 browse，需要再 load 一次才能看见题）
+const subjectRef = ref(null)
+function switchToBrowse() {
+  mode.value = MODE_BROWSE
+  // 等 v-show 把组件显示出来再 load（保险起见用 50ms 而非 nextTick）
+  setTimeout(() => {
+    if (subjectRef.value && subjectRef.value.load) {
+      subjectRef.value.load()
+    }
+  }, 50)
+}
 </script>
 
 <template>
@@ -161,7 +174,7 @@ function forwardToChat(question) {
           <button :class="{ active: mode === MODE_CHAT }" @click="mode = MODE_CHAT">
             💬 问答
           </button>
-          <button :class="{ active: mode === MODE_BROWSE }" @click="mode = MODE_BROWSE">
+          <button :class="{ active: mode === MODE_BROWSE }" @click="switchToBrowse">
             📖 专题刷题
           </button>
           <button :class="{ active: mode === MODE_INTERVIEW }" @click="mode = MODE_INTERVIEW">
@@ -177,6 +190,7 @@ function forwardToChat(question) {
           :has-library="libraryCount > 0"
         />
         <SubjectBrowser
+          ref="subjectRef"
           v-show="mode === MODE_BROWSE"
           :has-library="libraryCount > 0"
           @ask="forwardToChat"

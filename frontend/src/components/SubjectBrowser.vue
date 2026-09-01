@@ -5,7 +5,7 @@
 // 段 B-修 #4：补全示例题库后的难度筛选
 //   - 顶部增加「全部 / 基础 / 进阶 / 困难」tab，按 metadata.difficulty 过滤
 //   - 单题卡片显示难度标签 + 题型标签，便于识别
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { getBySubject } from '../api.js'
 
 const props = defineProps({ hasLibrary: Boolean })
@@ -68,6 +68,12 @@ function askAbout(q) {
   // 把题目内容作为问题扔回 ChatPanel 去问（让 RAG 生成整理后的答案）
   emit('ask', `请详细讲解：${q.title}`)
 }
+
+// 段 B-修：组件挂载时主动拉一次数据（之前没人调 load 导致右侧一直空）
+// 题库为空时不拉（hasLibrary 为 false 时父组件不显示本面板）
+onMounted(() => {
+  if (props.hasLibrary) load()
+})
 
 // 暴露给父组件主动调用（比如父组件切到本面板时刷新）
 defineExpose({ load })

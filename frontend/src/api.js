@@ -95,8 +95,10 @@ export function clearLibrary() {
 }
 
 // 按学科分组列出所有题目（段 B-B2：专题刷题）
-export function getBySubject() {
-  return request('/api/documents/by-subject')
+// difficulty 可为 null（全部）或 '基础' / '进阶' / '困难'，与后端 /by-subject?difficulty=* 对应
+export function getBySubject(difficulty = null) {
+  const q = difficulty ? `?difficulty=${encodeURIComponent(difficulty)}` : ''
+  return request(`/api/documents/by-subject${q}`)
 }
 
 // 随机抽 N 道题（段 B-B3：模拟面试）

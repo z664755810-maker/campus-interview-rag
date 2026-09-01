@@ -14,6 +14,7 @@ const emit = defineEmits(['uploaded'])
 
 const uploading = ref(false)
 const loadingSample = ref(false)
+const sampleCount = ref(0) // 动态显示最近一次载入示例题库的数量
 const message = ref('')
 const error = ref('')
 const dragOver = ref(false)
@@ -87,6 +88,7 @@ async function handleLoadSample() {
   loadingSample.value = true
   try {
     const data = await loadSample()
+    sampleCount.value = data.ingested
     message.value = `示例题库已载入 ${data.ingested} 道题，可以直接提问了`
     emit('uploaded', { source: data.source, ingested: data.ingested })
   } catch (e) {
@@ -113,7 +115,7 @@ function onDrop(e) {
 
     <!-- 主入口：一键载入示例。手边没文件时也能立刻体验 -->
     <button class="sample-btn" :disabled="loadingSample" @click="handleLoadSample">
-      <span v-if="!loadingSample">⚡ 一键载入示例题库（50 道）</span>
+      <span v-if="!loadingSample">⚡ 一键载入示例题库（<b>{{ sampleCount || 70 }}</b> 道）</span>
       <span v-else>载入中…</span>
     </button>
 
