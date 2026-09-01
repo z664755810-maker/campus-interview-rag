@@ -230,26 +230,39 @@ def clear_library(payload: dict[str, Any] = Body(default_factory=dict)):
 
 
 @router.get("/documents/by-subject")
-def list_by_subject():
+def list_by_subject(difficulty: str | None = None, q_type: str | None = None):
     """按学科（subject）分组列出所有题目，用于「专题刷题」面板。
 
     返回结构：
     {
       "subjects": [
-        {"name": "Java", "count": 12, "questions": [{"q_index": "Q1", "title": "...", "preview": "..."}]},
+        {"name": "Java", "count": 12, "questions": [{"q_index": "Q1", "title": "...", "preview": "...", "question_only": "...", "difficulty": "基础", "q_type": "qa"}]},
         ...
       ],
       "total": 50
     }
     学科按题数倒序；preview 取题目正文前 80 字，避免响应体过大。
+
+    可选筛选：
+      difficulty=基础/进阶/困难  → 仅按难度过滤
+      q_type=qa/multi_choice/judge/code_output → 按题型过滤
     """
     try:
         col = get_collection(COLLECTION_NAME)
         total = col.count()
         if total == 0:
             return {"subjects": [], "total": 0}
+        # Chroma where 过滤：同时支持 difficulty 与 q_type
+        where: dict = {}
+        if difficulty and difficulty in {"基础", "进阶", "困难"}:
+            where["difficulty"] = difficulty
+        if q_type and q_type in {"qa", "multi_choice", "judge", "code_output"}:
+            where["q_type"] = q_type
         # 一次拿全 metadata + document，省得 N+1
-        res = col.get(include=["metadatas", "documents"])
+        res = col.get(
+            where=where or None,
+            include=["metadatas", "documents"],
+        )
         groups: dict[str, list[dict]] = {}
         for doc, meta in zip(res["documents"], res["metadatas"]):
             meta = meta or {}
@@ -260,6 +273,9 @@ def list_by_subject():
                     "q_index": meta.get("q_index"),
                     "title": meta.get("title", ""),
                     "preview": content[:80] + ("…" if len(content) > 80 else ""),
+                    "question_only": meta.get("question_only", ""),
+                    "difficulty": meta.get("difficulty", "基础"),
+                    "q_type": meta.get("q_type", "qa"),
                 }
             )
         # 按题数倒序：重点学科置顶
@@ -273,11 +289,18 @@ def list_by_subject():
 
 
 @router.get("/documents/random")
-def random_questions(subject: str | None = None, n: int = 5):
+def random_questions(subject: str | None = None, n: int = 5, include_generic: bool = False):
     """随机抽 N 道题，用于「模拟面试」。
 
-    - subject=None：全题库随机；否则按学科过滤
-    - n 默认 5（适合一场迷你模拟面试），上限 20 防止滥用
+    参数：
+      subject        ：可选，按学科过滤（None = 全题库，但默认排除通用文档）
+      n              ：1~20（默认 5）
+      include_generic：默认 False —— 通用文档不进模拟面试
+                       （通用文档只是复习资料，不是「面试题」，避免出现
+                       「一段 Word 正文当一题」的体验问题。设 True 可强制包含）
+
+    业务降级：如果过滤后题数 < n 且 include_generic=False，自动 fallback 到
+              「含通用文档的全量库」再抽，避免「库里明明有题却抽不到」的尴尬。
     """
     if n < 1 or n > 20:
         raise HTTPException(status_code=400, detail="n 需在 1~20 之间")
@@ -286,23 +309,41 @@ def random_questions(subject: str | None = None, n: int = 5):
         total = col.count()
         if total == 0:
             return {"questions": [], "total": 0}
-        where = {"subject": subject} if subject else None
-        res = col.get(where=where, include=["metadatas", "documents"])
-        items = []
-        for doc, meta in zip(res["documents"], res["metadatas"]):
-            meta = meta or {}
-            content = doc or ""
-            items.append(
-                {
-                    "subject": meta.get("subject", "未分类"),
-                    "q_index": meta.get("q_index"),
-                    "title": meta.get("title", ""),
-                    "content": content,
-                    "source": meta.get("source", ""),
-                }
-            )
-        import random as _r
 
+        def _pick(where: dict | None) -> list[dict]:
+            res = col.get(where=where, include=["metadatas", "documents"])
+            items = []
+            for doc, meta in zip(res.get("documents") or [], res.get("metadatas") or []):
+                meta = meta or {}
+                content = doc or ""
+                items.append(
+                    {
+                        "subject": meta.get("subject", "未分类"),
+                        "q_index": meta.get("q_index"),
+                        "title": meta.get("title", ""),
+                        "question_only": meta.get("question_only", ""),
+                        "difficulty": meta.get("difficulty", "基础"),
+                        "q_type": meta.get("q_type", "qa"),
+                        "content": content,
+                        "source": meta.get("source", ""),
+                    }
+                )
+            return items
+
+        # 第一优先：尊重 subject + 过滤通用文档
+        if subject:
+            items = _pick({"subject": subject})
+        else:
+            items = _pick({"subject": {"$ne": "通用文档"}} if not include_generic else None)
+
+        # 降级：过滤后为 0 时，回退到全量（保底）
+        if not items and not include_generic and not subject:
+            items = _pick(None)
+
+        if not items:
+            return {"questions": [], "total": total}
+
+        import random as _r
         picked = _r.sample(items, min(n, len(items)))
         return {"questions": picked, "total": total}
     except HTTPException:

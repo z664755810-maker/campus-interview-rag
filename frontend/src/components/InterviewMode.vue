@@ -1,6 +1,14 @@
 <script setup>
 // 段 B-B3：模拟面试
 // 随机抽 N 道题 → 限时（默认 90 秒/题）→ 自评（对/错/不确定）→ 评分 + 错题列表
+//
+// 段 B-修 #1：题干/答案拆开建模
+//   - current.questionOnly 仅显示题干，不泄露答案
+//   - 自评点击后才揭晓完整 current.content（题面 + 答案）
+//   - 解锁后切换到下一题（状态由 revealed 决定）
+//
+// 段 B-修 #2：随时可退出
+//   - 顶部「退出面试」按钮 → confirm 二次确认 → 回 setup 阶段
 import { ref, computed, onUnmounted } from 'vue'
 import { getRandom, postJson } from '../api.js'
 
@@ -18,6 +26,7 @@ const questions = ref([]) // 抽到的题目
 const currentIdx = ref(0)
 const answers = ref([]) // { q, userSelf: 'right'|'wrong'|'unsure', userAnswer: '' }
 const userInput = ref('') // 当前题的"我的作答"
+const revealed = ref(false) // 当前题答案是否已揭晓
 const timeLeft = ref(TIME_PER_Q)
 let timerHandle = null
 
@@ -39,6 +48,7 @@ async function start() {
     currentIdx.value = 0
     answers.value = []
     userInput.value = ''
+    revealed.value = false
     startTimer()
     step.value = STEP.INTERVIEW
   } catch (e) {
@@ -52,7 +62,7 @@ function startTimer() {
   timerHandle = setInterval(() => {
     timeLeft.value -= 1
     if (timeLeft.value <= 0) {
-      // 时间到，自动跳到下一题，标记为 unsure
+      // 时间到视为「揭晓并跳下一题」，同时标记为 unsure
       markAndNext('unsure')
     }
   }, 1000)
@@ -66,11 +76,31 @@ function stopTimer() {
 }
 
 function markAndNext(self) {
-  // 记录自评
+  // 首次自评：揭晓答案；如果点的是 wrong/unsure，停留展示答案几秒再切下一题；
+  // 如果点的是 right，直接切下一题（已经掌握，没必要多看）
+  const alreadyRevealed = revealed.value
+  // 1. 首次按下时把"是否揭晓"标记为 true（这样切换下一题前答案能停留可见）
+  if (!alreadyRevealed) {
+    revealed.value = true
+    // right 类型直接跳过停留；wrong/unsure 停 4 秒让用户比对答案
+    if (self === 'right') {
+      proceedToNext(self)
+      return
+    }
+    timerHandle = setTimeout(() => proceedToNext(self), 4000)
+    // 清掉旧的秒级计时器，否则它会再触发 markAndNext
+    stopTimer()
+    return
+  }
+  // 2. 已经揭晓、用户二次点击"继续下一题"：直接走
+  proceedToNext(self)
+}
+
+function proceedToNext(self) {
   answers.value.push({
     q: current.value,
     userAnswer: userInput.value,
-    userSelf: self, // 'right' | 'wrong' | 'unsure'
+    userSelf: self,
   })
 
   if (currentIdx.value + 1 >= questions.value.length) {
@@ -80,7 +110,23 @@ function markAndNext(self) {
   }
   currentIdx.value += 1
   userInput.value = ''
+  revealed.value = false
   startTimer()
+}
+
+function quitInterview() {
+  // 段 B-修 #2：随时可退出（二次确认）
+  if (!window.confirm('确定要退出当前模拟面试吗？未做完的题目将不会计分。')) {
+    return
+  }
+  stopTimer()
+  step.value = STEP.SETUP
+  questions.value = []
+  currentIdx.value = 0
+  answers.value = []
+  userInput.value = ''
+  revealed.value = false
+  timeLeft.value = TIME_PER_Q
 }
 
 function restart() {
@@ -89,6 +135,8 @@ function restart() {
   questions.value = []
   answers.value = []
   userInput.value = ''
+  revealed.value = false
+  timeLeft.value = TIME_PER_Q
 }
 
 onUnmounted(stopTimer)
@@ -96,7 +144,7 @@ onUnmounted(stopTimer)
 // 进度条
 const progressPct = computed(() => {
   if (!questions.value.length) return 0
-  return Math.round(((currentIdx.value) / questions.value.length) * 100)
+  return Math.round((currentIdx.value / questions.value.length) * 100)
 })
 
 const timerColor = computed(() => {
@@ -107,6 +155,14 @@ const timerColor = computed(() => {
 
 const mm = computed(() => String(Math.floor(timeLeft.value / 60)).padStart(1, '0'))
 const ss = computed(() => String(timeLeft.value % 60).padStart(2, '0'))
+
+// 揭示答案后，把已知类型映射成可读标签
+const Q_TYPE_LABEL = {
+  qa: '问答',
+  multi_choice: '选择题',
+  judge: '判断题',
+  code_output: '代码输出',
+}
 </script>
 
 <template>
@@ -138,24 +194,57 @@ const ss = computed(() => String(timeLeft.value % 60).padStart(2, '0'))
           <div class="bar-bg"><div class="bar-fill" :style="{ width: progressPct + '%' }"></div></div>
         </div>
         <div class="timer" :style="{ color: timerColor }">⏱ {{ mm }}:{{ ss }}</div>
+        <button class="quit" @click="quitInterview" title="随时退出当前面试">🚪 退出</button>
       </header>
 
       <div class="card">
         <div class="meta">
           <span class="tag">{{ current.subject }}</span>
           <span class="idx">{{ current.q_index }}</span>
+          <span class="diff" :class="current.difficulty">{{ current.difficulty || '基础' }}</span>
+          <span class="qtype">{{ Q_TYPE_LABEL[current.q_type] || '问答' }}</span>
         </div>
-        <h3 class="qtitle">{{ current.title }}</h3>
-        <pre class="qcontent">{{ current.content }}</pre>
+        <h3 class="qtitle">{{ current.question_only || current.title }}</h3>
+        <!-- 题面与答案拆开建模：默认只显示题干，点击自评后才揭晓参考答案 -->
         <textarea
           v-model="userInput"
           class="myanswer"
           placeholder="📝 在这里写你的作答思路（不会传给后端，仅本地自评用）"
         ></textarea>
+
+        <!-- 揭晓区：reaveled=true 时展开参考答案 -->
+        <transition name="reveal">
+          <div v-if="revealed" class="answer-reveal">
+            <div class="answer-label">📖 参考答案</div>
+            <pre class="qcontent">{{ current.content }}</pre>
+            <p v-if="!userInput.trim()" class="hint">
+              💡 看看参考答案与你的思路有啥差距 → 继续下一题
+            </p>
+          </div>
+        </transition>
+
         <div class="actions">
-          <button class="btn wrong" @click="markAndNext('wrong')">❌ 我答错了</button>
-          <button class="btn unsure" @click="markAndNext('unsure')">🤔 不确定</button>
-          <button class="btn right" @click="markAndNext('right')">✅ 我答对了</button>
+          <button
+            v-if="!revealed"
+            class="btn wrong"
+            @click="markAndNext('wrong')"
+          >❌ 我答错了</button>
+          <button
+            v-if="!revealed"
+            class="btn unsure"
+            @click="markAndNext('unsure')"
+          >🤔 不确定</button>
+          <button
+            v-if="!revealed"
+            class="btn right"
+            @click="markAndNext('right')"
+          >✅ 我答对了</button>
+          <!-- 揭晓后允许手动「继续下一题」 -->
+          <button
+            v-else
+            class="btn continue"
+            @click="markAndNext(current.userSelf || 'unsure')"
+          >➡ 下一题</button>
         </div>
       </div>
     </template>
@@ -272,6 +361,47 @@ const ss = computed(() => String(timeLeft.value % 60).padStart(2, '0'))
 .btn.unsure:hover { background: #bb8009; }
 .btn.wrong { background: #da3633; color: #fff; }
 .btn.wrong:hover { background: #f85149; }
+.btn.continue {
+  background: #1f6feb; color: #fff; flex: 0 0 auto; min-width: 160px;
+}
+.btn.continue:hover { background: #388bfd; }
+
+/* 退出按钮 */
+.quit {
+  background: transparent; color: #8b949e; border: 1px solid #30363d;
+  padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+  font-family: inherit; margin-left: 10px;
+}
+.quit:hover { color: #f85149; border-color: #f85149; }
+
+/* 元数据标签：难度 + 题型 */
+.diff {
+  padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+}
+.diff.基础 { background: #1f3a5c; color: #79c0ff; }
+.diff.进阶 { background: #5c3a1f; color: #ffa657; }
+.diff.困难 { background: #5c1f1f; color: #ff8181; }
+.diff.通用 { background: #30363d; color: #8b949e; }
+.qtype {
+  background: #30363d; color: #c9d1d9; padding: 2px 8px;
+  border-radius: 4px; font-size: 11px;
+}
+
+/* 答案揭晓区 */
+.answer-reveal {
+  margin-top: 14px; padding: 14px 16px;
+  background: #0d1117; border: 1px solid #1f6feb; border-radius: 8px;
+}
+.answer-label {
+  font-size: 12px; color: #58a6ff; font-weight: 600;
+  margin-bottom: 8px; letter-spacing: 0.5px;
+}
+.answer-reveal .hint {
+  color: #8b949e; font-size: 12px; margin: 8px 0 0;
+}
+
+.reveal-enter-active, .reveal-leave-active { transition: opacity 0.3s, transform 0.3s; }
+.reveal-enter-from, .reveal-leave-to { opacity: 0; transform: translateY(-6px); }
 
 .result { flex: 1; overflow-y: auto; }
 .score-card {

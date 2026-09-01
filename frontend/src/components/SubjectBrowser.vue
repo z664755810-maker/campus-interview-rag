@@ -1,6 +1,10 @@
 <script setup>
 // 段 B-B2：专题刷题
 // 按学科下拉/列表浏览题目，点开看完整内容。点"用 RAG 解析"可针对该题提问。
+//
+// 段 B-修 #4：补全示例题库后的难度筛选
+//   - 顶部增加「全部 / 基础 / 进阶 / 困难」tab，按 metadata.difficulty 过滤
+//   - 单题卡片显示难度标签 + 题型标签，便于识别
 import { ref, computed } from 'vue'
 import { getBySubject } from '../api.js'
 
@@ -11,15 +15,19 @@ const loading = ref(false)
 const error = ref('')
 const data = ref({ subjects: [], total: 0 })
 const activeSubject = ref(null) // 当前选中的学科
+const activeDifficulty = ref('全部') // 难度筛选
 const openIndex = ref(null) // 当前展开的题号（q_index）
 const search = ref('') // 学科内搜索关键字
 
-async function load() {
+// 难度 tab 列表（与后端 /api/documents/by-subject?difficulty=* 对应）
+const DIFFICULTY_TABS = ['全部', '基础', '进阶', '困难']
+
+async function load(difficulty = activeDifficulty.value) {
   loading.value = true
   error.value = ''
   try {
-    data.value = await getBySubject()
-    // 默认选中题数最多的学科
+    data.value = await getBySubject(difficulty === '全部' ? null : difficulty)
+    // 默认选中题数最多的学科（仅切到新难度时刷新默认）
     if (data.value.subjects.length && !activeSubject.value) {
       activeSubject.value = data.value.subjects[0].name
     }
@@ -41,9 +49,16 @@ const filteredQuestions = computed(() => {
   return qs.filter(
     (q) =>
       (q.title || '').toLowerCase().includes(k) ||
-      (q.preview || '').toLowerCase().includes(k)
+      (q.preview || '').toLowerCase().includes(k) ||
+      (q.question_only || '').toLowerCase().includes(k)
   )
 })
+
+function switchDifficulty(d) {
+  activeDifficulty.value = d
+  openIndex.value = null
+  load(d)
+}
 
 function toggle(qIdx) {
   openIndex.value = openIndex.value === qIdx ? null : qIdx
@@ -56,6 +71,14 @@ function askAbout(q) {
 
 // 暴露给父组件主动调用（比如父组件切到本面板时刷新）
 defineExpose({ load })
+
+// 题型标签
+const Q_TYPE_LABEL = {
+  qa: '问答',
+  multi_choice: '选择',
+  judge: '判断',
+  code_output: '代码输出',
+}
 </script>
 
 <template>
@@ -73,6 +96,16 @@ defineExpose({ load })
     <div v-else-if="!data.subjects.length" class="info">题库中没有可分类的题目</div>
 
     <div v-else class="layout">
+      <!-- 顶部：难度筛选 tabs -->
+      <nav class="difficulty-bar">
+        <button
+          v-for="d in DIFFICULTY_TABS"
+          :key="d"
+          :class="['tab', { active: activeDifficulty === d }]"
+          @click="switchDifficulty(d)"
+        >{{ d }}</button>
+      </nav>
+
       <!-- 左侧：学科列表 -->
       <aside class="subjects">
         <div class="search-box">
@@ -101,7 +134,9 @@ defineExpose({ load })
           <li v-for="q in filteredQuestions" :key="q.q_index + q.title" class="qitem">
             <button class="qhead" @click="toggle(q.q_index)">
               <span class="idx">{{ q.q_index || '?' }}</span>
-              <span class="title">{{ q.title || '(无标题)' }}</span>
+              <span class="title">{{ q.question_only || q.title || '(无标题)' }}</span>
+              <span class="diff" :class="q.difficulty">{{ q.difficulty || '基础' }}</span>
+              <span class="qtype-pill">{{ Q_TYPE_LABEL[q.q_type] || '问答' }}</span>
               <span class="caret">{{ openIndex === q.q_index ? '▲' : '▼' }}</span>
             </button>
             <div v-if="openIndex === q.q_index" class="qbody">
@@ -127,6 +162,35 @@ defineExpose({ load })
 .err { color: #f85149; }
 
 .layout { display: flex; gap: 16px; flex: 1; min-height: 0; }
+
+/* 难度筛选 tabs（段 B-修 #4） */
+.difficulty-bar {
+  display: flex; gap: 8px; margin-bottom: 12px;
+}
+.difficulty-bar .tab {
+  background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+  padding: 6px 16px; border-radius: 6px; font-size: 12px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s;
+}
+.difficulty-bar .tab:hover { border-color: #58a6ff; }
+.difficulty-bar .tab.active {
+  background: #1f6feb33; border-color: #58a6ff; color: #58a6ff;
+}
+
+/* 单题卡片里的难度 + 题型小标签 */
+.qhead .diff {
+  padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;
+  flex-shrink: 0;
+}
+.qhead .diff.基础 { background: #1f3a5c; color: #79c0ff; }
+.qhead .diff.进阶 { background: #5c3a1f; color: #ffa657; }
+.qhead .diff.困难 { background: #5c1f1f; color: #ff8181; }
+.qhead .diff.通用 { background: #30363d; color: #8b949e; }
+.qhead .qtype-pill {
+  background: #30363d; color: #c9d1d9; padding: 1px 6px; border-radius: 3px;
+  font-size: 10px; flex-shrink: 0;
+}
+
 .subjects {
   width: 200px; flex-shrink: 0; display: flex; flex-direction: column;
   background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
