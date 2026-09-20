@@ -3,8 +3,21 @@
 把知识库中的资料与用户问题拼成带引用编号的 Prompt，交给大模型生成结构化答案。
 这里不再局限于面试题库，而是面向真实企业场景：政策查询、流程梳理、执行摘要、风险审查。
 """
+import time
+
+from app.core.config import settings
 from app.services.vector_store import search
 from app.services.zhipu import generate_text
+
+RESPONSE_CACHE = {}
+CACHE_TTL_SECONDS = 600
+DEFAULT_TOP_K = min(5, settings.top_k)
+MODE_MAX_TOKENS = {
+    "answer": 450,
+    "summary": 700,
+    "action_items": 650,
+    "risk_check": 700,
+}
 
 
 PROMPT_TEMPLATES = {
@@ -97,17 +110,51 @@ def build_prompt(query: str, contexts: list[dict], mode: str = "answer") -> tupl
     prompt = template.format(context_block=context_block, query=query)
     return prompt, citations
 
+def _make_cache_key(query: str, mode: str, top_k: int | None) -> tuple[str, str, int]:
+    """为重复查询生成稳定的缓存键，避免重复调用大模型。"""
+    normalized_mode = (mode or "answer").lower()
+    normalized_top_k = max(1, min(top_k or settings.top_k or 5, 8))
+    return (query.strip(), normalized_mode, normalized_top_k)
+
 
 def ask(query: str, top_k: int | None = None, mode: str = "answer") -> dict:
     """主入口：检索 -> 拼 Prompt -> 生成 -> 溯源。"""
-    contexts = search(query, top_k=top_k)
+    if not query or not query.strip():
+        raise ValueError("Question cannot be empty")
+
+    normalized_query = query.strip()
+    normalized_mode = (mode or "answer").lower()
+    if normalized_mode not in PROMPT_TEMPLATES:
+        normalized_mode = "answer"
+
+    effective_top_k = max(1, min(top_k or settings.top_k or 5, 8))
+    if len(normalized_query) < 40 and effective_top_k > 3:
+        effective_top_k = 3
+
+    cache_key = _make_cache_key(normalized_query, normalized_mode, effective_top_k)
+    cache_entry = RESPONSE_CACHE.get(cache_key)
+    if cache_entry and time.time() - cache_entry["timestamp"] < CACHE_TTL_SECONDS:
+        return cache_entry["result"]
+    if cache_entry:
+        RESPONSE_CACHE.pop(cache_key, None)
+
+    contexts = search(normalized_query, top_k=effective_top_k)
     if not contexts:
-        return {
-            "query": query,
-            "mode": mode,
+        result = {
+            "query": normalized_query,
+            "mode": normalized_mode,
             "answer": "当前知识库中未找到与该问题相关的资料。请换一个更具体的关键词，或上传对应的政策、流程、FAQ、会议纪要等文档。",
             "citations": [],
         }
-    prompt, citations = build_prompt(query, contexts, mode=mode)
-    answer = generate_text(prompt, temperature=0.25)
-    return {"query": query, "mode": mode, "answer": answer, "citations": citations}
+        RESPONSE_CACHE[cache_key] = {"timestamp": time.time(), "result": result}
+        return result
+
+    prompt, citations = build_prompt(normalized_query, contexts, mode=normalized_mode)
+    answer = generate_text(
+        prompt,
+        temperature=0.25,
+        max_tokens=MODE_MAX_TOKENS.get(normalized_mode, 450),
+    )
+    result = {"query": normalized_query, "mode": normalized_mode, "answer": answer, "citations": citations}
+    RESPONSE_CACHE[cache_key] = {"timestamp": time.time(), "result": result}
+    return result
