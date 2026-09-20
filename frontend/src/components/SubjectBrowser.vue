@@ -1,10 +1,5 @@
 <script setup>
-// 段 B-B2：专题刷题
-// 按学科下拉/列表浏览题目，点开看完整内容。点"用 RAG 解析"可针对该题提问。
-//
-// 段 B-修 #4：补全示例题库后的难度筛选
-//   - 顶部增加「全部 / 基础 / 进阶 / 困难」tab，按 metadata.difficulty 过滤
-//   - 单题卡片显示难度标签 + 题型标签，便于识别
+// 知识地图：按主题与文档分层梳理知识，便于面向企业场景快速定位信息。
 import { ref, computed, onMounted } from 'vue'
 import { getBySubject } from '../api.js'
 
@@ -65,8 +60,7 @@ function toggle(qIdx) {
 }
 
 function askAbout(q) {
-  // 把题目内容作为问题扔回 ChatPanel 去问（让 RAG 生成整理后的答案）
-  emit('ask', `请详细讲解：${q.title}`)
+  emit('ask', `请详细解释：${q.title || q.question_only}`, 'answer')
 }
 
 // 段 B-修：组件挂载时主动拉一次数据（之前没人调 load 导致右侧一直空）
@@ -89,10 +83,10 @@ const Q_TYPE_LABEL = {
 
 <template>
   <div class="browser">
-    <h2>2 · 专题刷题</h2>
+    <h2>知识地图</h2>
 
     <div v-if="!hasLibrary" class="warn">
-      ⚠️ 题库为空，请先在左侧上传面试题文档。
+      ⚠️ 需要先上传文档，知识地图才能生成。
     </div>
 
     <div v-else-if="loading" class="info">加载中…</div>
@@ -147,7 +141,7 @@ const Q_TYPE_LABEL = {
             </button>
             <div v-if="openIndex === q.q_index" class="qbody">
               <p class="preview">{{ q.preview }}…</p>
-              <button class="ask-btn" @click="askAbout(q)">💬 让 RAG 详细讲解</button>
+              <button class="ask-btn" @click="askAbout(q)">💬 进入问答</button>
             </div>
           </li>
         </ul>

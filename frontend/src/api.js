@@ -73,6 +73,11 @@ export function getStats() {
   return request('/api/documents/stats')
 }
 
+// 获取业务运营指标：主题覆盖、字段支持、默认检索上下文等，用于展示“提效”数据
+export function getAnalytics() {
+  return request('/api/documents/analytics')
+}
+
 // 一键载入内置示例题库：手边没有现成文件时，点一下就能立刻体验完整链路
 export function loadSample() {
   return request('/api/documents/load-sample', { method: 'POST' })

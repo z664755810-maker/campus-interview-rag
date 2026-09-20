@@ -21,12 +21,10 @@ from app.core.security import APIKeyMiddleware, RateLimitMiddleware
 
 
 def _auto_seed() -> None:
-    """启动时检查 Chroma；若为空，从内置 sample_interview.md 灌一份基础题库。
+    """启动时检查 Chroma；若为空，从内置企业知识样例库灌入基础数据。
 
-    为什么需要这个：PaaS（Railway / Render）容器是临时文件系统，
-    重启 chroma_db/ 会被清空。这个 hook 让演示环境开箱即用，
-    已经被 ingest 过的真实数据不会被覆盖。
-    """
+    这份样例库重点覆盖内部政策、流程说明、风险审查和项目协同等真实工作场景，
+    让项目在启动后就能直接展示“企业知识库助手”的实际使用方式。"""
     try:
         from app.services.vector_store import get_client, COLLECTION_NAME
 
@@ -42,13 +40,17 @@ def _auto_seed() -> None:
 
         from app.services import ingestion
 
-        sample_path = Path(__file__).resolve().parent.parent / "data" / "sample_interview.md"
-        if not sample_path.exists():
-            print("[seed] 未找到样例题库文件，请通过 /api/documents/upload 上传")
+        candidate_paths = [
+            Path(__file__).resolve().parent.parent / "data" / "enterprise_knowledge.md",
+            Path(__file__).resolve().parent.parent / "data" / "sample_interview.md",
+        ]
+        sample_path = next((p for p in candidate_paths if p.exists()), None)
+        if sample_path is None:
+            print("[seed] 未找到内置知识样例文件，请通过 /api/documents/upload 上传")
             return
         text = sample_path.read_text(encoding="utf-8")
-        n = ingestion.ingest_text(text, source="sample_interview.md")
-        print(f"[seed] 已自动从样例题库灌入 {n} 条（来源 sample_interview.md）")
+        n = ingestion.ingest_text(text, source=sample_path.name)
+        print(f"[seed] 已自动灌入 {n} 条（来源 {sample_path.name}）")
     except Exception as e:
         # seed 失败不能影响服务启动
         print(f"[seed] 自动入库失败（不影响启动）：{e}")
@@ -67,8 +69,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="校招面试题库 RAG 系统",
-    version="0.1.0",
+    title="企业知识库智能助手",
+    version="0.2.0",
+    description="支持内部政策查询、流程梳理、会议纪要摘要和风险审查的 RAG 平台",
     lifespan=lifespan,
 )
 

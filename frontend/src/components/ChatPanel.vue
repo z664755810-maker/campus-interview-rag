@@ -2,25 +2,48 @@
 import { ref, nextTick } from 'vue'
 import { postJson } from '../api.js'
 
-// 对话面板：发 /api/ask，展示答案 + 引用出处卡片。
-// 引用卡片默认折叠原文，点击展开——对应后端返回的 citations（含 [n] 映射元数据）。
-// 段 A 改 #1：提问框占满 chat 区域，JS 动态调高度（最少 3 行，最多 8 行）。
 const props = defineProps({ hasLibrary: Boolean })
 
 const question = ref('')
 const loading = ref(false)
 const error = ref('')
-const chats = ref([]) // { question, answer, citations, expanded:[] }
+const chats = ref([])
+const activeMode = ref('answer')
+
+const MODE_OPTIONS = [
+  { id: 'answer', label: '知识问答' },
+  { id: 'summary', label: '结论摘要' },
+  { id: 'action_items', label: '行动清单' },
+  { id: 'risk_check', label: '风险审查' },
+]
+
+const presets = {
+  answer: [
+    '请解释客户退款政策的审批链路。',
+    '新员工入职流程需要哪些步骤？',
+  ],
+  summary: [
+    '总结这份 SOP 对团队日常运营的关键影响。',
+    '整合这批会议纪要里的关键结论和待办。',
+  ],
+  action_items: [
+    '根据文档提出需要立即执行的动作项。',
+    '帮我整理这次变更的执行清单和验收标准。',
+  ],
+  risk_check: [
+    '请检查文档中是否存在合规和交付风险。',
+    '识别这份流程可能的异常点与控制建议。',
+  ],
+}
 
 const MIN_ROWS = 3
 const MAX_ROWS = 8
-const LINE_PX = 22 // 与 CSS line-height 对应；用于按行数算高度
+const LINE_PX = 22
 const textareaRef = ref(null)
 
 function autoResize() {
   const el = textareaRef.value
   if (!el) return
-  // 先重置到最小再读取 scrollHeight，让"删完字"也能收缩回去
   el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, MAX_ROWS * LINE_PX) + 'px'
 }
@@ -31,12 +54,13 @@ async function send() {
   loading.value = true
   error.value = ''
   try {
-    const data = await postJson('/api/ask', { query: q, top_k: 5 })
+    const data = await postJson('/api/ask', { query: q, top_k: 5, mode: activeMode.value })
     chats.value.push({
       question: q,
       answer: data.answer,
       citations: data.citations || [],
       expanded: (data.citations || []).map(() => false),
+      mode: data.mode || activeMode.value,
     })
     question.value = ''
     await nextTick()
@@ -52,31 +76,58 @@ function toggle(chat, i) {
   chat.expanded[i] = !chat.expanded[i]
 }
 
-// 快捷键：Enter 发送 / Shift+Enter 换行
 function onKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     send()
   }
 }
-// 段 B：暴露 fillQuestion 给父组件（专题刷题面板点击"💬 让 RAG 详细讲解"时调用）
+
 defineExpose({
-  fillQuestion(q) {
+  fillQuestion(q, selectedMode = 'answer') {
     question.value = q
+    activeMode.value = selectedMode
     nextTick(() => autoResize())
   },
 })
 </script>
 
 <template>
-  <div class="chat">
-    <h2>2 · 向题库提问</h2>
-
-    <div v-if="!hasLibrary" class="warn">
-      ⚠️ 题库为空，请先在左侧上传面试题文档，再开始提问。
+  <div class="chat-panel">
+    <div class="chat-header">
+      <div>
+        <h2>智能问答</h2>
+        <p>面向政策、流程、FAQ 和运营文档的企业知识检索</p>
+      </div>
     </div>
 
-    <div class="messages" v-else>
+    <div v-if="!hasLibrary" class="warn">
+      ⚠️ 当前知识库为空，请先在左侧上传政策、SOP、FAQ 或会议纪要等文档。
+    </div>
+
+    <div v-else class="mode-row">
+      <button
+        v-for="modeItem in MODE_OPTIONS"
+        :key="modeItem.id"
+        :class="{ active: activeMode === modeItem.id }"
+        @click="activeMode = modeItem.id"
+      >
+        {{ modeItem.label }}
+      </button>
+    </div>
+
+    <div v-if="hasLibrary" class="preset-row">
+      <button
+        v-for="item in presets[activeMode]"
+        :key="item"
+        class="preset"
+        @click="question = item"
+      >
+        {{ item }}
+      </button>
+    </div>
+
+    <div class="messages" v-if="hasLibrary">
       <div v-for="(c, idx) in chats" :key="idx" class="msg">
         <div class="q"><span class="tag">Q</span>{{ c.question }}</div>
         <div class="a">{{ c.answer }}</div>
@@ -103,12 +154,12 @@ defineExpose({
         v-model="question"
         @input="autoResize"
         @keydown="onKey"
-        :placeholder="`例如：TCP 三次握手的作用是什么？\n支持多行输入（Enter 发送，Shift+Enter 换行）`"
+        :placeholder="`例如：请解释售后退款审批链路\n支持多行输入（Enter 发送，Shift+Enter 换行）`"
         :rows="MIN_ROWS"
         :disabled="loading || !hasLibrary"
       ></textarea>
       <button :disabled="loading || !hasLibrary" @click="send">
-        {{ loading ? '生成中…' : '提问' }}
+        {{ loading ? '生成中…' : '提交' }}
       </button>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
@@ -116,65 +167,134 @@ defineExpose({
 </template>
 
 <style scoped>
-.chat { display: flex; flex-direction: column; height: 100%; padding: 20px 28px; }
-.chat > h2 { font-size: 15px; color: #f0f6fc; margin: 0 0 14px; }
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 20px 24px 18px;
+}
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.chat-header h2 {
+  margin: 0;
+  font-size: 15px;
+  color: #f0f6fc;
+}
+.chat-header p {
+  margin: 4px 0 0;
+  color: #8b949e;
+  font-size: 12px;
+}
 .warn {
-  background: #2d1d00; border: 1px solid #9e6a03; color: #e3b341;
-  padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px;
+  background: rgba(250, 204, 21, 0.08);
+  border: 1px solid rgba(250, 204, 21, 0.38);
+  color: #facc15;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  margin-bottom: 16px;
 }
-.messages { flex: 1; overflow-y: auto; padding-right: 6px; }
+.mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.mode-row button {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.7);
+  color: #dbeafe;
+  border-radius: 999px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.mode-row button.active {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.25), rgba(34, 211, 238, 0.15));
+  border-color: rgba(96, 165, 250, 0.7);
+}
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.preset {
+  border: 1px dashed rgba(148, 163, 184, 0.33);
+  background: transparent;
+  color: #cbd5e1;
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 6px;
+}
 .msg {
-  background: #161b22; border: 1px solid #30363d; border-radius: 10px;
-  padding: 14px 16px; margin-bottom: 16px;
+  background: rgba(15, 23, 42, 0.76);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
 }
-.q { font-weight: 600; color: #c9d1d9; margin-bottom: 8px; }
+.q {
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 8px;
+}
 .q .tag {
-  display: inline-block; background: #1f6feb; color: #fff; font-size: 12px;
-  border-radius: 4px; padding: 1px 7px; margin-right: 8px;
+  display: inline-block;
+  background: linear-gradient(135deg, #2563eb, #38bdf8);
+  color: white;
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 1px 7px;
+  margin-right: 8px;
 }
-.a { color: #c9d1d9; line-height: 1.7; white-space: pre-wrap; font-size: 14px; }
-.cites { margin-top: 12px; border-top: 1px dashed #30363d; padding-top: 10px; }
+.a {
+  color: #dbeafe;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  font-size: 14px;
+}
+.cites { margin-top: 12px; border-top: 1px dashed rgba(148, 163, 184, 0.22); padding-top: 10px; }
 .cites-head { font-size: 12px; color: #8b949e; margin-bottom: 8px; }
 .cite { margin-bottom: 6px; }
 .cite-head {
   width: 100%; display: flex; align-items: center; gap: 8px;
-  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-  padding: 8px 10px; cursor: pointer; color: #c9d1d9; font-size: 13px; text-align: left;
+  background: rgba(2, 6, 23, 0.6); border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 8px;
+  padding: 8px 10px; cursor: pointer; color: #dbeafe; font-size: 13px; text-align: left;
 }
-.cite-head:hover { border-color: #58a6ff; }
-.badge { color: #3fb950; font-weight: 700; }
-.cit-subject { color: #58a6ff; }
-.cit-title { color: #c9d1d9; }
-.cit-src { color: #6e7681; font-size: 12px; }
+.badge { color: #4ade80; font-weight: 700; }
+.cit-subject { color: #7dd3fc; }
+.cit-title { color: #e2e8f0; }
+.cit-src { color: #94a3b8; font-size: 12px; }
 .toggle { margin-left: auto; color: #8b949e; font-size: 12px; }
 .cite-body {
-  margin: 6px 0 0; padding: 10px 12px; background: #0d1117;
-  border-left: 3px solid #30363d; border-radius: 0 6px 6px 0;
-  color: #adbac7; font-size: 13px; line-height: 1.6; white-space: pre-wrap;
-  overflow-x: auto;
+  margin: 6px 0 0; padding: 10px 12px; background: rgba(2, 6, 23, 0.7);
+  border-left: 3px solid rgba(96, 165, 250, 0.7); border-radius: 0 8px 8px 0;
+  color: #cbd5e1; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-x: auto;
 }
-
-/* 段 A 改 #1：提问框占满 chat 区域，附快捷键提示 */
 .composer {
-  display: flex; gap: 10px; margin-top: 14px;
-  align-items: flex-end; /* 按钮贴底，与动态高度的 textarea 齐平 */
+  display: flex; gap: 10px; margin-top: 14px; align-items: flex-end;
 }
 .composer textarea {
-  flex: 1; min-height: 70px; max-height: 200px;
-  resize: none; background: #0d1117; border: 1px solid #30363d;
-  border-radius: 8px; color: #c9d1d9; padding: 12px 14px;
-  font-size: 14px; font-family: inherit; line-height: 1.5;
+  flex: 1; min-height: 70px; max-height: 200px; resize: none;
+  background: rgba(2, 6, 23, 0.7); border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px; color: #e2e8f0; padding: 12px 14px; font-size: 14px; line-height: 1.5;
   box-sizing: border-box;
-  transition: border-color 0.15s;
 }
-.composer textarea:focus { outline: none; border-color: #58a6ff; }
-.composer textarea:disabled { background: #161b22; color: #6e7681; }
+.composer textarea:focus { outline: none; border-color: rgba(96, 165, 250, 0.9); }
 .composer button {
-  height: 44px; padding: 0 24px; background: #238636; color: #fff;
-  border: none; border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: 600;
-  white-space: nowrap;
+  height: 44px; padding: 0 22px; background: linear-gradient(135deg, #16a34a, #22c55e); color: white;
+  border: none; border-radius: 10px; font-weight: 600; cursor: pointer; white-space: nowrap;
 }
 .composer button:disabled { background: #21262d; color: #6e7681; cursor: not-allowed; }
-.composer button:hover:not(:disabled) { background: #2ea043; }
-.err { color: #f85149; font-size: 13px; margin-top: 8px; }
+.err { color: #f87171; font-size: 13px; margin-top: 8px; }
 </style>

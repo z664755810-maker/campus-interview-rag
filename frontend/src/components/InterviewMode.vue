@@ -1,14 +1,5 @@
 <script setup>
-// 段 B-B3：模拟面试
-// 随机抽 N 道题 → 限时（默认 90 秒/题）→ 自评（对/错/不确定）→ 评分 + 错题列表
-//
-// 段 B-修 #1：题干/答案拆开建模
-//   - current.questionOnly 仅显示题干，不泄露答案
-//   - 自评点击后才揭晓完整 current.content（题面 + 答案）
-//   - 解锁后切换到下一题（状态由 revealed 决定）
-//
-// 段 B-修 #2：随时可退出
-//   - 顶部「退出面试」按钮 → confirm 二次确认 → 回 setup 阶段
+// 流程演练：从知识库中抽取关键任务，模拟真实工作流下的判断与执行。
 import { ref, computed, onUnmounted } from 'vue'
 import { getRandom, postJson } from '../api.js'
 
@@ -169,20 +160,20 @@ const Q_TYPE_LABEL = {
   <div class="iv">
     <!-- ── 阶段 1：配置 ── -->
     <template v-if="step === 'setup'">
-      <h2>2 · 模拟面试</h2>
+      <h2>流程演练</h2>
       <div v-if="!hasLibrary" class="warn">
-        ⚠️ 题库为空，请先在左侧上传面试题文档。
+        ⚠️ 需要先上传文档，流程演练才能从知识库中随机抽题。
       </div>
       <div v-else class="setup">
         <p class="intro">
-          随机从题库抽 {{ N_DEFAULT }} 道题，限时 {{ TIME_PER_Q }} 秒/题。<br />
-          模拟真实面试节奏，时间到自动跳到下一题。
+          从知识库中随机抽取 {{ N_DEFAULT }} 个关键任务，限时 {{ TIME_PER_Q }} 秒/题。<br />
+          模拟真实工作流中对问题的判断、响应与复盘。
         </p>
         <label class="opt">
-          <span>学科筛选（留空 = 全题库）</span>
-          <input v-model="subject" placeholder="例如：Java / MySQL / 计算机网络" />
+          <span>主题筛选（留空 = 全知识库）</span>
+          <input v-model="subject" placeholder="例如：客服 / 合规 / 采购 / 运维" />
         </label>
-        <button class="start" @click="start">🎤 开始模拟面试</button>
+        <button class="start" @click="start">🧭 开始流程演练</button>
       </div>
     </template>
 

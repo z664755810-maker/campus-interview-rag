@@ -1,31 +1,43 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { getApiKey, setApiKey, getStats, getUsage, deleteBySource, clearLibrary } from './api.js'
+import { getStats, getAnalytics, getUsage, deleteBySource, clearLibrary } from './api.js'
 import UploadPanel from './components/UploadPanel.vue'
 import ChatPanel from './components/ChatPanel.vue'
 import SubjectBrowser from './components/SubjectBrowser.vue'
 import InterviewMode from './components/InterviewMode.vue'
 
-// ── 全局状态 ──────────────────────────────────────────
-const MODE_CHAT = 'chat'         // 提问
-const MODE_BROWSE = 'browse'     // 专题刷题
-const MODE_INTERVIEW = 'interview' // 模拟面试
+const MODE_CHAT = 'chat'
+const MODE_BROWSE = 'browse'
+const MODE_INTERVIEW = 'interview'
 const mode = ref(MODE_CHAT)
 
-const uploads = ref([])          // 已上传文档列表
-const libraryCount = ref(0)      // 总段数
+const uploads = ref([])
+const libraryCount = ref(0)
+const analytics = ref({
+  total_chunks: 0,
+  source_count: 0,
+  subject_count: 0,
+  top_k_default: 5,
+  business_modes: 4,
+  format_support: 14,
+  top_subjects: [],
+})
 
-// onUploaded 按 source 去重：后端是 upsert（幂等覆盖），
-// 若前端无脑累加，重复载入同一份示例题库会让计数虚高，与实际库内条数对不上。
+const overviewCards = computed(() => [
+  { label: '知识覆盖', value: `${analytics.value.subject_count || 0} 个主题`, tone: 'blue' },
+  { label: '知识片段', value: `${analytics.value.total_chunks || libraryCount.value || 0} 条`, tone: 'green' },
+  { label: '业务模式', value: `${analytics.value.business_modes || 4} 类`, tone: 'orange' },
+  { label: '检索上下文', value: `Top-k ${analytics.value.top_k_default || 5}`, tone: 'purple' },
+])
+
 function onUploaded(payload) {
   const idx = uploads.value.findIndex((u) => u.source === payload.source)
   if (idx !== -1) {
-    libraryCount.value -= uploads.value[idx].ingested // 先扣掉旧值
+    libraryCount.value -= uploads.value[idx].ingested
     uploads.value.splice(idx, 1)
   }
   uploads.value.unshift(payload)
   libraryCount.value += payload.ingested
-  // 同步后端真实状态，避免本地计数漂移
   refreshStats()
 }
 
@@ -40,9 +52,15 @@ async function refreshStats() {
   } catch (e) {
     console.warn('题库状态拉取失败：', e.message)
   }
+
+  try {
+    const a = await getAnalytics()
+    analytics.value = a || analytics.value
+  } catch (e) {
+    console.warn('运营指标拉取失败：', e.message)
+  }
 }
 
-// ── 段 A 改 #2：题库管理 ────────────────────────────────
 async function handleDelete(source) {
   if (!confirm(`确定要删除「${source}」吗？该操作不可撤销。`)) return
   try {
@@ -54,8 +72,8 @@ async function handleDelete(source) {
 }
 
 async function handleClearAll() {
-  if (!confirm('⚠️ 这会清空整个题库（含示例题库），确定吗？\n此操作不可撤销。')) return
-  if (!confirm('再确认一次：真的要清空所有题目吗？')) return
+  if (!confirm('⚠️ 这会清空整个知识库，确定吗？\n此操作不可撤销。')) return
+  if (!confirm('再确认一次：真的要清空所有文档吗？')) return
   try {
     await clearLibrary()
     await refreshStats()
@@ -64,10 +82,6 @@ async function handleClearAll() {
   }
 }
 
-// ── 段 A 改 #3：API Key 装饰化 ──────────────────────────
-// 思路：保留后端鉴权中间件（防滥用者），但前端不再让用户改一个「所有人都知道」的 key；
-// 改为显示「当前接口配额 + 状态」指示器，体现「有鉴权 + 有限流」的中台能力。
-const apiKeyReady = ref(!!getApiKey()) // 后端如果配了 key，前端必带；没配就放空
 const usage = ref({ used: 0, limit: 30, remaining: 30, window_seconds: 60 })
 const usagePct = computed(() =>
   usage.value.limit > 0 ? Math.min(100, Math.round((usage.value.used / usage.value.limit) * 100)) : 0
@@ -82,35 +96,28 @@ async function refreshUsage() {
   try {
     usage.value = await getUsage()
   } catch (e) {
-    // /api/usage 在没有 API_KEYS 的环境也能走通（已在 RATE_LIMIT_EXEMPT 里）
+    // ignore
   }
 }
 
 onMounted(async () => {
   await Promise.all([refreshStats(), refreshUsage()])
-  // 配额每 10 秒拉一次，让指示器接近实时
   setInterval(refreshUsage, 10000)
 })
 
-// ── 段 B：跨面板通信 ──────────────────────────────────
-// 专题刷题面板的"让 RAG 详细讲解"按钮会把题目传回这里，自动切到问答面板
 const chatRef = ref(null)
-function forwardToChat(question) {
+function forwardToChat(question, modeName = 'answer') {
   mode.value = MODE_CHAT
-  // 等 DOM 更新后调用 ChatPanel 的 fillQuestion（这里用 nextTick 简化处理）
   setTimeout(() => {
     if (chatRef.value && chatRef.value.fillQuestion) {
-      chatRef.value.fillQuestion(question)
+      chatRef.value.fillQuestion(question, modeName)
     }
   }, 50)
 }
 
-// 段 B-修：切到「专题刷题」时强制 reload（onMounted 只触发一次，
-// 用户先停在 chat 等 stats 加载完再切到 browse，需要再 load 一次才能看见题）
 const subjectRef = ref(null)
 function switchToBrowse() {
   mode.value = MODE_BROWSE
-  // 等 v-show 把组件显示出来再 load（保险起见用 50ms 而非 nextTick）
   setTimeout(() => {
     if (subjectRef.value && subjectRef.value.load) {
       subjectRef.value.load()
@@ -120,17 +127,17 @@ function switchToBrowse() {
 </script>
 
 <template>
-  <div class="app">
+  <div class="app-shell">
     <header class="topbar">
-      <div class="brand">
-        <span class="logo">📚</span>
+      <div class="brand-block">
+        <div class="brand-mark">AI</div>
         <div>
-          <h1>校招软开面试题库 · RAG 问答</h1>
-          <p class="sub">上传题库 → 检索增强生成 → 答案带引用溯源</p>
+          <p class="eyebrow">企业知识库与运营协同平台</p>
+          <h1>企业知识库智能助手</h1>
         </div>
       </div>
-      <div class="right">
-        <!-- 段 A 改 #3：限流配额指示器（替代原来的 API Key 输入框） -->
+
+      <div class="topbar-actions">
         <div class="usage-box" :title="`后端按 IP 限流，60 秒内最多 ${usage.limit} 次`">
           <div class="usage-label">
             <span>接口配额</span>
@@ -143,11 +150,29 @@ function switchToBrowse() {
             <div class="usage-fill" :style="{ width: usagePct + '%', background: usageColor }"></div>
           </div>
         </div>
-        <div class="lib-stat">
-          题库已索引 <b>{{ libraryCount }}</b> 段
-        </div>
+        <div class="lib-stat">知识库已索引 <b>{{ libraryCount }}</b> 条</div>
       </div>
     </header>
+
+    <section class="kpis">
+      <div v-for="card in overviewCards" :key="card.label" class="kpi-card" :class="card.tone">
+        <span>{{ card.label }}</span>
+        <strong>{{ card.value }}</strong>
+      </div>
+    </section>
+
+    <section v-if="analytics.top_subjects.length" class="insights">
+      <div class="insight-header">
+        <h2>知识主题分布</h2>
+        <span>覆盖重点业务领域</span>
+      </div>
+      <div class="subject-list">
+        <div v-for="item in analytics.top_subjects" :key="item.name" class="subject-pill">
+          <span>{{ item.name }}</span>
+          <strong>{{ item.count }}</strong>
+        </div>
+      </div>
+    </section>
 
     <main class="layout">
       <aside class="sidebar">
@@ -155,50 +180,37 @@ function switchToBrowse() {
 
         <div class="lib-list" v-if="uploads.length">
           <div class="lib-head">
-            <h3>已上传文档</h3>
-            <button class="clear-btn" @click="handleClearAll" title="清空整个题库">🗑 清空</button>
+            <h3>已入库文档</h3>
+            <button class="clear-btn" @click="handleClearAll" title="清空知识库">🗑 清空</button>
           </div>
           <ul>
-            <li v-for="(u, i) in uploads" :key="u.source">
+            <li v-for="u in uploads" :key="u.source">
               <span class="dot"></span>
               <span class="src" :title="u.source">{{ u.source }}</span>
-              <em>{{ u.ingested }} 段</em>
+              <em>{{ u.ingested }} 条</em>
               <button class="del-btn" @click="handleDelete(u.source)" title="删除该文档">✕</button>
             </li>
           </ul>
         </div>
 
-        <!-- 模式切换 -->
         <div class="mode-switch">
-          <h3>功能面板</h3>
+          <h3>工作台</h3>
           <button :class="{ active: mode === MODE_CHAT }" @click="mode = MODE_CHAT">
-            💬 问答
+            💬 智能问答
           </button>
           <button :class="{ active: mode === MODE_BROWSE }" @click="switchToBrowse">
-            📖 专题刷题
+            🗂️ 知识地图
           </button>
           <button :class="{ active: mode === MODE_INTERVIEW }" @click="mode = MODE_INTERVIEW">
-            🎤 模拟面试
+            🧭 流程演练
           </button>
         </div>
       </aside>
 
-      <section class="chat-area">
-        <ChatPanel
-          v-show="mode === MODE_CHAT"
-          ref="chatRef"
-          :has-library="libraryCount > 0"
-        />
-        <SubjectBrowser
-          ref="subjectRef"
-          v-show="mode === MODE_BROWSE"
-          :has-library="libraryCount > 0"
-          @ask="forwardToChat"
-        />
-        <InterviewMode
-          v-show="mode === MODE_INTERVIEW"
-          :has-library="libraryCount > 0"
-        />
+      <section class="workspace">
+        <ChatPanel v-show="mode === MODE_CHAT" ref="chatRef" :has-library="libraryCount > 0" />
+        <SubjectBrowser ref="subjectRef" v-show="mode === MODE_BROWSE" :has-library="libraryCount > 0" @ask="forwardToChat" />
+        <InterviewMode v-show="mode === MODE_INTERVIEW" :has-library="libraryCount > 0" />
       </section>
     </main>
   </div>
@@ -208,81 +220,270 @@ function switchToBrowse() {
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }
 body {
-  background: #0d1117;
-  color: #c9d1d9;
+  margin: 0;
+  background: radial-gradient(circle at top, #13243f 0%, #0b1220 30%, #090d16 100%);
+  color: #e6edf7;
   font-family: -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.app { display: flex; flex-direction: column; height: 100vh; }
+button, input, textarea { font: inherit; }
+.app-shell {
+  min-height: 100vh;
+  padding: 20px 22px 24px;
+}
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 24px; background: #161b22; border-bottom: 1px solid #30363d;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 20px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(14px);
+}
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #60a5fa, #22d3ee);
+  color: #03151d;
+  font-weight: 800;
+}
+.eyebrow {
+  margin: 0 0 3px;
+  color: #78d7ff;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.topbar h1 {
+  margin: 0;
+  font-size: clamp(1.4rem, 2vw, 2.2rem);
+  line-height: 1.2;
+}
+.topbar-actions {
+  display: flex;
+  align-items: center;
   gap: 16px;
 }
-.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.brand .logo { font-size: 28px; }
-.topbar h1 { font-size: 18px; margin: 0; color: #f0f6fc; }
-.topbar .sub { margin: 2px 0 0; font-size: 12px; color: #8b949e; }
-.right { display: flex; align-items: center; gap: 20px; flex-shrink: 0; }
-
-/* ── 段 A 改 #3：限流配额指示器 ── */
+.lib-stat, .usage-box {
+  background: rgba(15, 23, 42, 0.74);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+}
+.lib-stat {
+  padding: 10px 14px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
 .usage-box {
-  display: flex; flex-direction: column; gap: 4px;
-  min-width: 130px; padding: 6px 10px;
-  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  min-width: 220px;
+  padding: 9px 12px;
 }
-.usage-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 11px; color: #8b949e; }
-.usage-num { font-size: 13px; }
-.usage-num b { font-size: 15px; }
-.usage-num .dim { color: #6e7681; margin-left: 2px; }
-.usage-bar { height: 3px; background: #21262d; border-radius: 2px; overflow: hidden; }
-.usage-fill { height: 100%; transition: width 0.4s, background 0.4s; }
-
-.lib-stat { font-size: 13px; color: #8b949e; white-space: nowrap; }
-.lib-stat b { color: #58a6ff; font-size: 16px; }
-
-.layout { flex: 1; display: flex; min-height: 0; }
+.usage-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #cbd5e1;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.usage-num { display: flex; align-items: baseline; gap: 4px; }
+.usage-num b { font-size: 16px; }
+.dim { color: #94a3b8; }
+.usage-bar {
+  width: 100%;
+  height: 8px;
+  background: rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.usage-fill {
+  height: 100%;
+  border-radius: inherit;
+}
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+.kpi-card {
+  padding: 18px 18px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.8);
+}
+.kpi-card span {
+  display: block;
+  color: #94a3b8;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.kpi-card strong {
+  font-size: 26px;
+  font-weight: 700;
+}
+.kpi-card.blue { box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.2); }
+.kpi-card.green { box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.2); }
+.kpi-card.orange { box-shadow: inset 0 0 0 1px rgba(251, 146, 60, 0.2); }
+.kpi-card.purple { box-shadow: inset 0 0 0 1px rgba(168, 85, 247, 0.2); }
+.insights {
+  margin-top: 18px;
+  padding: 14px 16px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.75);
+}
+.insight-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.insight-header h2 {
+  margin: 0;
+  font-size: 14px;
+  color: #e2e8f0;
+}
+.insight-header span {
+  color: #94a3b8;
+  font-size: 11px;
+}
+.subject-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.subject-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  color: #dbeafe;
+  font-size: 12px;
+}
+.subject-pill strong {
+  color: #f8fafc;
+  font-size: 11px;
+}
+.layout {
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 18px;
+  min-height: 0;
+}
 .sidebar {
-  width: 320px; padding: 20px; border-right: 1px solid #30363d;
-  overflow-y: auto; background: #0d1117; display: flex; flex-direction: column; gap: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
-.chat-area { flex: 1; min-width: 0; display: flex; position: relative; }
-.chat-area > * { position: absolute; inset: 0; }
-
-.lib-list { background: transparent; }
-.lib-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.lib-list h3 { font-size: 13px; color: #8b949e; margin: 0; }
+.workspace {
+  min-height: 0;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  overflow: hidden;
+}
+.lib-list, .mode-switch {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 16px;
+  padding: 16px;
+}
+.lib-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.lib-head h3, .mode-switch h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #e2e8f0;
+}
+.clear-btn, .del-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
 .clear-btn {
-  background: transparent; border: 1px solid #30363d; color: #8b949e;
-  padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: inherit;
+  color: #fda4af;
+  font-size: 12px;
 }
-.clear-btn:hover { color: #f85149; border-color: #f85149; }
-.lib-list ul { list-style: none; padding: 0; margin: 0; }
+.lib-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .lib-list li {
-  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-  background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-  font-size: 13px; margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.9);
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
 }
-.lib-list li .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; flex-shrink: 0; }
-.lib-list li .src {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: #c9d1d9; font-size: 12px;
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #60a5fa;
+  flex-shrink: 0;
 }
-.lib-list li em { color: #8b949e; font-style: normal; font-size: 11px; flex-shrink: 0; }
+.src {
+  flex: 1;
+  min-width: 0;
+  color: #cbd5e1;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-list em {
+  color: #94a3b8;
+  font-style: normal;
+  font-size: 11px;
+}
 .del-btn {
-  background: transparent; border: none; color: #6e7681;
-  font-size: 14px; cursor: pointer; padding: 0 4px; line-height: 1;
+  color: #94a3b8;
 }
-.del-btn:hover { color: #f85149; }
-
-.mode-switch { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px solid #30363d; }
-.mode-switch h3 { font-size: 13px; color: #8b949e; margin: 8px 0; }
+.mode-switch { display: flex; flex-direction: column; gap: 10px; }
 .mode-switch button {
-  background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
-  padding: 9px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
-  text-align: left; font-family: inherit;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.9);
+  color: #dbeafe;
+  cursor: pointer;
+  text-align: left;
+  transition: 0.15s ease;
 }
-.mode-switch button:hover { border-color: #58a6ff; }
 .mode-switch button.active {
-  background: #1f6feb33; border-color: #1f6feb; color: #58a6ff; font-weight: 600;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(34, 211, 238, 0.12));
+  border-color: rgba(96, 165, 250, 0.7);
+}
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; }
+  .kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+  .topbar { flex-direction: column; align-items: flex-start; }
+  .topbar-actions { width: 100%; justify-content: space-between; }
 }
 </style>

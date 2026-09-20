@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, UploadFile, File
 from pydantic import BaseModel, field_validator
+from typing import Literal
 
 from app.services import ingestion
 from app.services import parsers
@@ -46,6 +47,7 @@ class SearchRequest(BaseModel):
 class AskRequest(BaseModel):
     query: str
     top_k: int | None = None
+    mode: Literal["answer", "summary", "action_items", "risk_check"] = "answer"
 
     @field_validator("query")
     @classmethod
@@ -101,6 +103,60 @@ def list_formats():
     }
 
 
+@router.get("/documents/analytics")
+def analytics():
+    """返回能展示在简历/仪表盘中的业务指标：覆盖主题、文档格式、检索上下文规模等。"""
+    try:
+        col = get_collection(COLLECTION_NAME)
+        total = col.count()
+        subject_counts: dict[str, int] = {}
+        source_counts: dict[str, int] = {}
+        chunk_chars = 0
+        if total:
+            res = col.get(include=["metadatas", "documents"])
+            documents = res.get("documents") or []
+            for idx, meta in enumerate(res.get("metadatas") or []):
+                m = meta or {}
+                src = str(m.get("source", "未知来源"))
+                subject = str(m.get("subject", "未分类")).strip() or "未分类"
+                source_counts[src] = source_counts.get(src, 0) + 1
+                if subject != "未分类":
+                    subject_counts[subject] = subject_counts.get(subject, 0) + 1
+                if idx < len(documents):
+                    try:
+                        chunk_chars += len(documents[idx] or "")
+                    except Exception:
+                        pass
+
+        top_subjects = [
+            {"name": name, "count": count}
+            for name, count in sorted(subject_counts.items(), key=lambda x: (-x[1], x[0]))[:6]
+        ]
+        return {
+            "total_chunks": total,
+            "source_count": len(source_counts),
+            "subject_count": len(subject_counts),
+            "top_subjects": top_subjects,
+            "avg_chunks_per_doc": round(total / max(len(source_counts), 1), 2),
+            "avg_chars_per_chunk": round(chunk_chars / max(total, 1), 1),
+            "top_k_default": 5,
+            "business_modes": 4,
+            "format_support": 14,
+        }
+    except Exception:
+        return {
+            "total_chunks": 0,
+            "source_count": 0,
+            "subject_count": 0,
+            "top_subjects": [],
+            "avg_chunks_per_doc": 0,
+            "avg_chars_per_chunk": 0,
+            "top_k_default": 5,
+            "business_modes": 4,
+            "format_support": 14,
+        }
+
+
 @router.post("/documents/upload")
 async def upload_document(file: UploadFile = File(...)):
     """上传文档 -> 解析 -> 切分 -> 向量化 -> 入库。
@@ -146,24 +202,26 @@ async def upload_document(file: UploadFile = File(...)):
 
 @router.post("/documents/load-sample")
 def load_sample():
-    """一键载入内置示例题库。
+    """一键载入内置企业知识样例库。
 
-    为什么要有这个接口：很多同学（包括第一次用的人）手边根本没有现成的 .md/.docx
-    题库文件，对着空空的上传框无从下手。点一下就能灌入 70 道示例题，
-    立刻可以体验「提问 -> 带出处回答」的完整链路。
-    幂等：重复调用会 upsert 覆盖，不会灌出重复数据。
+    这份样例库覆盖内部政策、流程、风险与工作协同四类高频场景，
+    能让用户在第一次打开界面时就直接体验“真实企业知识助手”的核心玩法。
     """
-    sample_path = Path(__file__).resolve().parent.parent.parent / "data" / "sample_interview.md"
-    if not sample_path.exists():
-        raise HTTPException(status_code=404, detail="服务端未找到内置示例题库文件")
+    sample_candidates = [
+        Path(__file__).resolve().parent.parent.parent / "data" / "enterprise_knowledge.md",
+        Path(__file__).resolve().parent.parent.parent / "data" / "sample_interview.md",
+    ]
+    sample_path = next((p for p in sample_candidates if p.exists()), None)
+    if sample_path is None:
+        raise HTTPException(status_code=404, detail="服务端未找到内置知识示例文件")
     try:
         text = sample_path.read_text(encoding="utf-8")
-        count = ingestion.ingest_text(text, source="sample_interview.md")
+        count = ingestion.ingest_text(text, source=sample_path.name)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"示例题库入库失败：{e}")
+        raise HTTPException(status_code=502, detail=f"示例知识库入库失败：{e}")
     if count == 0:
-        raise HTTPException(status_code=500, detail="示例题库解析异常：切出 0 条")
-    return {"ingested": count, "source": "sample_interview.md"}
+        raise HTTPException(status_code=500, detail="示例知识库解析异常：切出 0 条")
+    return {"ingested": count, "source": sample_path.name}
 
 
 @router.post("/search")
@@ -176,8 +234,14 @@ def search_qa(req: SearchRequest):
 
 @router.post("/ask")
 def ask_qa(req: AskRequest):
-    # 阶段2 核心：RAG 问答。rag_ask 内部完成「检索 -> 拼 Prompt -> GLM 生成 -> 引用溯源」。
-    return rag_ask(req.query, top_k=req.top_k)
+    """RAG 问答与企业知识抽取。
+
+    - answer：回答问题
+    - summary：提炼结论和关键事实
+    - action_items：输出行动项与负责人建议
+    - risk_check：检测合规 / 交付 / 运营风险
+    """
+    return rag_ask(req.query, top_k=req.top_k, mode=req.mode)
 
 
 # ─────────────────────────── 题库管理接口（段 A 修 #2）───────────────────────────
