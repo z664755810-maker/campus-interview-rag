@@ -1,341 +1,106 @@
 # 企业知识库智能助手 · RAG 知识管理平台
 
-> 面向企业内部知识查询、流程梳理、风险审查和运营协同的 **检索增强生成（RAG）** 平台。
-> 上传政策文档 / SOP / FAQ / 会议纪要 → 自动切分向量化 → 基于语义检索生成结构化答案 → **答案带引用溯源**。
-> 这是一个以真实企业问题为驱动的项目升级版本，重点展示知识管理、流程协同和内部决策支持能力。
-
----
-
-> **👋 招聘方 / 面试官你好**：本作品集采用「**代码优先**」的展示方式。
->
-> - 📦 **完整代码**就是作品本身：GitHub 仓库包含全部源码、架构图、API 文档、分阶段实现记录
-> - 🛠️ **5 分钟本地跑通**：克隆 → 填密钥 → `uvicorn` 启动 → 浏览器访问 `http://localhost:5173`（步骤见下方「快速开始」）
-> - 🎯 **设计要点**：鉴权中间件、限流、引用溯源机制、自动 seed 等工程化细节在代码注释 + 文档里讲清
-> - ✅ **已云端部署（Render Free）**：`https://campus-interview-rag.onrender.com`，Docker 多阶段构建，自动 seed 70 道样例题库；embedding 走阿里百炼 DashScope、生成走智谱 GLM
-> - 💼 **本地也能跑**：不想看线上，按下方「快速开始」5 分钟起本地服务（需要自备 API Key）
+面向企业内部知识查询、流程梳理、风险审查和运营协同的 **检索增强生成（RAG）** 平台。
+上传政策文档 / SOP / FAQ / 会议纪要 → 自动切分向量化 → 混合检索召回相关片段 → 基于检索结果生成带引用溯源的答案。
 
 ---
 
 ## ✨ 功能特性
 
-- 📥 **文档入库**：支持 **14 种格式**（Word / PDF / PPT / Excel / CSV / JSON / HTML / Markdown / TXT 等），自动按「题」切分（保留单题语义完整性）；单文件 10MB 上限 + 类型白名单 + 老格式转换建议
-- 🧠 **向量化**：默认用阿里百炼 `text-embedding-v3`（1024 维），亦可切回智谱 `embedding-3`（2048 维）；入库与检索**同一模型同源**（`EMBEDDING_PROVIDER` 环境变量切换）
-- 🔍 **语义检索**：Chroma 持久化向量库，ANN 近似最近邻检索 top-k 相关片段
-- 🤖 **RAG 问答**：检索片段 + 问题拼入受约束 Prompt，交由智谱 GLM 生成答案
-- 📎 **引用溯源**：每道题带 `科目/题号/来源` 元数据，答案下方可展开查看出处卡片
-- 🛡️ **真实业务加固**：API Key 中间件鉴权（无/错 Key → 401）、按 IP 限流（超频 → 429）、Pydantic 请求校验（非法 → 422）
-
-## 📈 业务问题 → 方案 → 提效指标
-
-这个项目不是为了“堆 GitHub Star 或技术栈”，而是围绕真实企业知识管理和决策支持场景展开。核心痛点与落地方案如下：
-
-- 痛点 1：企业知识分散，员工需要在政策、SOP、FAQ、会议纪要之间反复查找，导致查询成本高。
-  - 方案：统一上传入库、按文档主题和来源保留元数据，并通过 `Top-k=5` 的语义检索把最相关片段聚合给模型。
-  - 提效数据：默认保留 5 条最相关上下文，避免答案被无关信息干扰；同时支持 14 种文档格式与 4 类业务模式（问答 / 摘要 / 行动清单 / 风险审查）
-
-- 痛点 2：AI 输出“看起来像答案”，但缺少可信依据，难以用于管理决策和审计。
-  - 方案：在 Prompt 中保留 `subject / source / q_index / title` 的引用索引，并在前端提供出处卡片展开原文。
-  - 提效数据：每条结论可以直接追溯到具体文档片段，用户可以在 1 次点击内看到证据来源；这让项目从“聊天机器人”升级成“可审计的知识助手”
-
-- 痛点 3：业务人员并不是只问一个问题，而是需要“梳理结论、列动作、排风险”。
-  - 方案：将一个通用 RAG 接口拆成 `answer / summary / action_items / risk_check` 四种模式，分别支持政策查询、流程梳理、任务落地与风险审查。
-  - 提效数据：一个工具覆盖 4 类真实工作流，适合企业内部知识查证、流程说明和协同运营，而不是只回答单个题目
-
-- 痛点 4：在简历中，HR 看不懂项目解决了什么业务问题，只看到“用了 FastAPI + Vue + Chroma”。
-  - 方案：把项目重构为“企业知识库智能助手”，并在 UI 和 README 中用“知识库覆盖、业务支持、审计能力、风控能力”的叙事说明问题价值。
-  - 提效数据：从“技术栈展示型项目”升级为“业务场景型项目”，更容易说明为企业知识搜索、流程协同和内部决策支持提供了结构化能力
-
-> 这部分落在简历里可以直接写成：
-> “设计并实现企业知识库 RAG 助手，支持政策/FAQ/流程文档入库与语义检索；通过结构化分块与 Top-k=5 检索压缩上下文噪声，并在输出中保留引用溯源，支持问答、摘要、行动清单和风险审查四类业务场景。项目覆盖 14 种文档格式，落地真实企业知识管理与内部决策支持场景。”
-
-### ⚡ 性能优化：让它不只是能用，而是更像生产系统
-
-真实企业工具最怕的，不是“功能少”，而是“慢 + 重复 + 资源浪费”。在这一版中，我额外补了一层工程化优化，避免每次同样问题都重复打大模型：
-
-- 缓存重复问答：相同问题 + 模式 + 检索上下文会在内存中缓存 10 分钟，重复问法不再重复调用 LLM；这能明显减少高频查询的云端成本和响应时间。
-- 短问题降级检索：当问题较短时，默认把 `top_k` 从 5 降到 3，减少无关片段、降低 Prompt 长度；对于长流程型问题仍保留 5 条上下文，兼顾准确性与速度。
-- 不同模式控制输出长度：`answer` 设为 450 tokens，`summary/action_items/risk_check` 分别控制在 650–700 tokens，避免“一条普通问答却输出大段长文档”的资源浪费。
-
-这个改动不只是“加了缓存”，而是从工程视角解决生产环境中最常见的两个问题：
-
-1. 同一类问题重复调用模型导致吞吐低；
-2. 通用问答模式不必消耗过多 token，影响速度与成本。
-
-在简历中可以把这段写成：
-
-> “在工程侧增加 RAG 查询缓存与分模式输出控制，针对短查询缩减检索上下文、针对重复问题复用结果，并控制不同业务模式的输出长度，提升问答响应效率并降低大模型调用成本。”
-
----
+- **多格式文档入库**：支持 Word / PDF / PPT / Excel / CSV / JSON / HTML / Markdown / TXT 等格式，自动解析文本与表格内容，按文档结构切分后向量化入库
+- **混合检索**：向量语义召回（百炼 text-embedding-v3）+ BM25 关键词召回（jieba 中文分词），RRF 倒数排名融合两路结果，解决纯向量对专有名词/编号匹配不准的问题
+- **相似度阈值过滤**：召回后按余弦距离阈值过滤低相关片段，减少高频词撞库带来的噪声
+- **RAG 问答**：检索片段 + 受约束 Prompt 交由大模型生成答案，Prompt 限制"仅基于给定资料回答"以抑制幻觉
+- **四种业务模式**：问答 / 摘要提炼 / 行动清单提取 / 风险审查，适配政策查询、流程梳理、任务落地、合规审查四类场景
+- **引用溯源**：每条答案标注来源文档与对应片段，前端可展开查看原文
+- **工程化**：API Key 鉴权、按 IP 限流、Pydantic 请求校验、查询缓存（重复问题 10 分钟内复用结果）
 
 ## 🧱 技术栈
 
-| 层 | 选型 | 说明 |
-|---|---|---|
-| 后端框架 | **FastAPI** | 异步、自带 OpenAPI 文档、Pydantic 校验天然契合输入校验 |
-| 向量库 | **Chroma 1.5.9**（嵌入式） | 向量 + 原文 + 元数据一体存储，本地持久化，最贴合引用溯源 |
-| Embedding | **阿里百炼 `text-embedding-v3`**（默认）/ 智谱 `embedding-3` | 默认 1024 维（可切 2048 维），`EMBEDDING_PROVIDER` 环境变量切换；中文语义强 |
-| 大模型 | **智谱 GLM-4**（开发期 `glm-4-flash`） | 中文问答质量好，需 API Key |
-| 前端 | **Vue 3 + Vite** | 组件化，经 Vite 代理 `/api` 对接后端 |
-| 部署 | **Docker 多阶段 + Render Free** | 前端 build 后拷入后端 `/app/static` 同源托管；`start.py` 读 `$PORT`；临时文件系统靠 `_auto_seed` 自动灌库 |
-
----
+| 层 | 选型 |
+|---|---|
+| 后端 | FastAPI + Uvicorn |
+| 向量库 | Chroma（持久化，向量+原文+元数据一体存储） |
+| Embedding | 阿里百炼 text-embedding-v3（1024 维），可切换智谱 embedding-3 |
+| 大模型 | 智谱 GLM-4 |
+| 关键词检索 | rank_bm25 + jieba 中文分词 |
+| 前端 | Vue 3 + Vite |
+| 部署 | Docker 多阶段构建 + Render 云平台 |
 
 ## 🏗️ 系统架构
 
-入库流（蓝）把文档变成可检索向量；问答流（绿）把问题变成带出处的答案：
-
-```mermaid
-flowchart LR
-    subgraph 入库流
-        A[面试题文档 .md] --> B[解析 / 按题切分]
-        B --> C[智谱 embedding-3 向量化]
-        C --> D[(Chroma 向量库\n向量+原文+元数据)]
-    end
-
-    subgraph 问答流
-        Q[用户问题] --> R[向量化 + 检索 top-k]
-        R --> D
-        D --> S[拼带引用号的 Prompt]
-        S --> L[智谱 GLM 生成]
-        L --> O[答案 + 引用溯源]
-    end
-
-    style A fill:#cfe8ff
-    style Q fill:#d6ffe0
-    style D fill:#fff0c2
-    style O fill:#ffd6e8
 ```
-
----
+入库流：文档 → 格式解析 → 结构切分 → 向量化 → Chroma + BM25 索引
+问答流：问题 → 向量化召回 + BM25召回 → RRF融合 → 阈值过滤 → 拼Prompt → 大模型生成 → 带引用答案
+```
 
 ## 📁 项目结构
 
 ```
-project-2/
-├── backend/                      # FastAPI 后端
+├── backend/
 │   ├── app/
-│   │   ├── main.py               # 入口：挂载路由 + 注册中间件 + CORS
-│   │   ├── api/documents.py      # /upload /search /ask 接口 + Pydantic 校验
-│   │   ├── core/
-│   │   │   ├── config.py         # 配置中心（从 .env 读密钥与阈值）
-│   │   │   └── security.py       # API Key 鉴权 + 按 IP 限流 中间件
+│   │   ├── main.py               # FastAPI 入口
+│   │   ├── api/documents.py      # 上传/检索/问答接口
+│   │   ├── core/config.py        # 配置（环境变量）
+│   │   ├── core/security.py      # API Key 鉴权 + 限流
 │   │   └── services/
-│   │       ├── zhipu.py          # 智谱 embedding / 生成 客户端
-│   │       ├── vector_store.py   # Chroma 封装（PersistentClient/upsert/query）
-│   │       ├── ingestion.py      # 文档解析 + 按题切分 + 入库
-│   │       └── rag.py            # RAG 问答：检索→拼Prompt→生成→溯源
-│   ├── data/sample_interview.md  # 样例题库（10 科 70 题）
-│   ├── scripts/
-│   │   ├── verify_stage1.py      # 阶段1 入库/检索验证
-│   │   └── reindex.py            # 清空并重新灌入样例题库
-│   ├── chroma_db/                # Chroma 持久化数据（gitignore）
-│   ├── requirements.txt
-│   ├── .env.example
-│   └── .env                      # 真实密钥（gitignore，不进仓库）
+│   │       ├── embeddings.py      # 向量化
+│   │       ├── vector_store.py   # Chroma 封装 + 混合检索 RRF 融合
+│   │       ├── bm25_index.py     # BM25 关键词索引
+│   │       ├── ingestion.py      # 文档解析切分入库
+│   │       ├── parsers.py        # 多格式解析（docx/pdf/pptx/xlsx/...）
+│   │       └── rag.py            # RAG 问答主流程
+│   └── requirements.txt
 └── frontend/                     # Vue3 前端
-    └── src/
-        ├── api.js                # 统一请求层（自动带 X-API-Key，翻译 401/429）
-        ├── App.vue               # 三栏布局 + 模式切换 + 限流配额指示器
-        └── components/
-            ├── UploadPanel.vue   # 上传/载入示例题库 + 格式白名单
-            ├── ChatPanel.vue     # 提问 + 引用溯源卡片
-            ├── SubjectBrowser.vue # 专题刷题（按学科分组 + 难度/题型筛选）
-            └── InterviewMode.vue  # 模拟面试（限时/自评/评分）
 ```
 
----
+## ⚙️ 环境要求
 
-## ⚙️ 环境要求（重要坑位）
+- Python 3.12（chromadb 1.5.9 无 3.13 预编译 wheel）
+- Node.js 18+（前端构建）
+- 智谱 API Key（问答生成）
+- 阿里百炼 API Key（向量化）
 
-| 依赖 | 要求 | 原因 |
-|---|---|---|
-| **Python** | **必须 3.12**（禁用 3.13） | `chroma-hnswlib` 全平台**无 cp313 的 wheel**，Chroma 在 3.13 上根本装不上（含 Railway 部署） |
-| **chromadb** | **锁 1.5.9**（禁用 0.6.3） | 0.6.3 精确依赖 `chroma-hnswlib==0.7.6`，该稳定版**仅源码包无 wheel**，Windows 源码编译需 MSVC 14；1.5.9 将其降为 dev 可选依赖，无需 MSVC 即可装 |
-| 智谱 API Key | 必需（生成用） | GLM-4 问答生成调用 `open.bigmodel.cn` |
-| 阿里百炼 API Key | 必需（embedding 用） | 向量化走 DashScope `dashscope.aliyuncs.com`，免费 50 万 token |
-| 网络 | 需访问上述两域名 | 调用 embedding / 生成接口 |
-
-> 本机使用 `uv` 管理的 `cpython-3.12.14` 建立虚拟环境；**新建 venv / 部署运行时一律 3.12**。
-
----
-
-## 🚀 快速开始（5 分钟本地跑通）
-
-> **如果你只想看效果**：完成下面 ①+②+③ 步，浏览器开 `http://localhost:5173` 即可问答。
-
-### 0. 前置：Python 3.12 + Node.js
-
-- **Python 3.12**（**务必 3.12**——`chroma-hnswlib` 没有 3.13 的官方预编译 wheel）
-  - 推荐用 [uv](https://github.com/astral-sh/uv) 安装：`uv python install 3.12`
-  - 或 Windows：官网下载 `python-3.12.x-amd64.exe`
-- **Node.js 18+**（前端 Vite 需要）
-
-### 1. 后端（Python / FastAPI）
+## 🚀 本地运行
 
 ```bash
+# 后端
 cd backend
-
-# 用 Python 3.12 建虚拟环境（务必 3.12！）
-py -V:Astral/CPython3.12.14 -m venv .venv
-.venv/Scripts/activate        # Windows；Linux/macOS 用 source .venv/bin/activate
-
-# 安装依赖（已锁定 chromadb==1.5.9）
+python -m venv .venv
+.venv/Scripts/activate
 pip install -r requirements.txt
+cp .env.example .env   # 填入 API Key
+python -m uvicorn app.main:app --port 8000
 
-# 配置密钥：复制 .env.example 为 .env 并填入你的 API Key
-cp .env.example .env
-# 编辑 .env，填入：
-#   ZHIPU_API_KEY=你的智谱Key（https://open.bigmodel.cn/ 申请，生成问答用）
-#   DASHSCOPE_API_KEY=你的阿里百炼Key（https://dashscope.console.aliyun.com/ 申请，向量化用）
-#   EMBEDDING_PROVIDER=dashscope   # 用阿里百炼做 embedding（避免智谱免费档 429）
-#   API_KEYS=dev-rag-2026        # 演示用客户端 Key
-#   RATE_LIMIT_PER_MINUTE=30
-
-# 灌入样例题库（10 科 70 题），会清空旧 collection 后重灌
-.venv/Scripts/python.exe scripts/reindex.py
-
-# 启动服务（默认 http://127.0.0.1:8000）
-.venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-启动后访问 `http://127.0.0.1:8000/docs` 可在线调试接口（Swagger UI）。
-
-### 2. 前端（Vue3 / Vite）
-
-新开一个终端：
-
-```bash
+# 前端（另开终端）
 cd frontend
 npm install
-npm run dev      # 默认 http://localhost:5173，Vite 已配置 /api 代理到 8000
+npm run dev
 ```
 
-打开 `http://localhost:5173`：
-- 左侧上传 `.md/.txt` 面试题文档（自动按题切分向量化）
-- 右侧输入问题 → 查看答案 + **引用溯源卡片**（点击卡片可展开原文）
-- 顶部可设置 API Key（默认 `dev-rag-2026`，与后端 `.env` 一致即可）
+## ☁️ 部署
 
-### 3. 验证三条核心链路
-
-| 测试 | 操作 | 期望 |
-|---|---|---|
-| 探活 | 浏览器开 `http://127.0.0.1:8000/health` | `{"status":"ok","api_key_set":true}` |
-| 鉴权 | 不带 Key POST `/api/ask` | 返 `401` |
-| 限流 | 同 IP 1 分钟内请求 `/api/ask` 超 30 次 | 返 `429` |
-| 问答 | 前端问"TCP 三次握手的作用" | 看到答案 + 至少 1 张引用卡片 |
-
----
-
-## ☁️ 云端部署（Render Free，已上线）
-
-> 本项目已部署在 **Render Free** 实例：`https://campus-interview-rag.onrender.com`。
-> 技术要点：**Docker 多阶段构建**（`Dockerfile`）把 Vue3 前端 build 后拷入后端 `/app/static` 同源托管；
-> `start.py` 直接读 Render 注入的 `$PORT`（绕过 shell 展开与 Railway `cd` 包装器坑）；
-> Render 临时文件系统重启会清空 `chroma_db`，靠 `main.py` 的 `_auto_seed()` 在后台线程自动灌入 70 道样例题库。
-> 详细步骤与踩坑见 `docs/render-deploy-env.md` 与 `docs/cross-project-experience.md`。
-
-### 本地 Docker 一键打包（任意平台通用）
+Docker 多阶段构建：前端 build 后拷入后端静态目录同源托管。示例：
 
 ```bash
-docker build -t campus-interview-rag .
+docker build -t campus-rag .
 docker run -p 8000:8000 \
-  -e ZHIPU_API_KEY=你的Key \
-  -e DASHSCOPE_API_KEY=你的百炼Key \
+  -e ZHIPU_API_KEY=xxx \
+  -e DASHSCOPE_API_KEY=xxx \
   -e EMBEDDING_PROVIDER=dashscope \
-  -e API_KEYS=dev-rag-2026 \
-  -e ALLOWED_ORIGINS=* \
-  campus-interview-rag
+  campus-rag
 ```
 
-启动后访问 `http://localhost:8000/health`，应返回 200；根路径 `/` 即中文 UI。
+## 🔌 主要接口
 
-## 🔌 API 一览
-
-| 方法 | 路径 | 说明 | 鉴权 |
-|---|---|---|---|
-| GET | `/health` | 探活（公开，返回 `api_key_set`） | 否 |
-| GET | `/api/usage` | 当前 IP 限流配额用量（公开） | 否 |
-| GET | `/api/documents/stats` | 题库总段数 + 各来源分布 | 是 |
-| GET | `/api/documents/formats` | 支持的文件格式白名单（前后端共用） | 是 |
-| POST | `/api/documents/upload` | 上传文档（14 种格式）并解析/切分/向量化入库 | 是 |
-| POST | `/api/documents/load-sample` | 一键载入内置 70 道样例题库（幂等） | 是 |
-| POST | `/api/documents/clear` | 清空整个题库（需 `confirm=true`） | 是 |
-| DELETE | `/api/documents/by-source/{source}` | 按来源删除某文档全部片段 | 是 |
-| POST | `/api/search` | 语义检索 top-k 片段（含元数据） | 是 |
-| POST | `/api/ask` | RAG 问答，返回 `answer + citations` | 是 |
-| GET | `/api/documents/by-subject` | 按学科分组列题（专题刷题，支持 `difficulty`/`q_type` 筛选） | 是 |
-| GET | `/api/documents/random` | 随机抽 N 题（模拟面试，默认排除通用文档） | 是 |
-
-示例（需带 `X-API-Key`）：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/ask \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-rag-2026" \
-  -d '{"query":"TCP 三次握手的作用","top_k":2}'
-
-# 返回结构
-{
-  "answer": "TCP 三次握手的作用是……[1]",
-  "citations": [
-    {
-      "index": 1,
-      "source": "sample_interview.md",
-      "subject": "计算机网络",
-      "q_index": 1,
-      "title": "Q1. [基础] TCP 三次握手的过程？",
-      "content": "客户端发 SYN；服务端回 SYN+ACK……",
-      "distance": 0.6366
-    }
-  ]
-}
-```
-
----
-
-## 🛡️ 鉴权与限流（阶段4）
-
-- **API Key 中间件**（`app/core/security.py`）：请求须带 `X-API-Key`（或 `Authorization: Bearer`）；
-  无效 → `401`；`/health`、`/docs` 等公开路径放行。**鉴权中间件注册在最外层，先于限流**——
-  无效 Key 直接 401，不消耗限流配额。
-- **限流中间件**：按客户端 IP 60 秒固定窗口计数，超 `RATE_LIMIT_PER_MINUTE` → `429`。
-- **请求校验**：`SearchRequest` / `AskRequest` 用 Pydantic `field_validator` 校验
-  `query` 非空、`top_k∈[1,10]`，非法 → `422`。
-- `API_KEYS` 支持逗号配置多个 Key；**为空时退化为不鉴权**（仅开发便利，生产务必配置）。
-
----
-
-## 📎 引用溯源机制
-
-1. 解析 markdown 时，每个 `### Q` 块作为独立 chunk，元数据记录 `source / subject / q_index / title`；
-2. 检索出 top-k 后，给每段编 `[1][2]…`，并在拼给 GLM 的 Prompt 中要求「论断后标 `[n]`、仅用给定资料、无则明说」；
-3. GLM 返回后，后端把 `[n]` 映射回对应 chunk 的元数据，随 `citations` 一并返回；
-4. **前端按结构化的 `citations` 数组渲染出处卡片**，而非正则解析答案文本——更健壮、也避免 XSS。
-
----
-
-## 🗂️ 分阶段构建记录
-
-| 阶段 | 内容 | 关键认知 |
+| 方法 | 路径 | 说明 |
 |---|---|---|
-| 0 | 前后端骨架跑通 | 虚拟环境隔离、配置密钥分离、Vite 代理免跨域 |
-| 1 | 入库管线 | Python 3.12 + chromadb 1.5.9 选型坑；智谱 `/embeddings`（复数）接口 |
-| 2 | 问答管线 | RAG 三环节（检索→增强→生成）；Prompt 约束 + 低 temperature 抑幻觉 |
-| 3 | 前端 | 原生 `fetch` 足够；引用卡片由结构化数据驱动 UI |
-| 4 | 业务加固 | 中间件洋葱模型；401 vs 429；统一校验 |
+| GET | `/health` | 探活 |
+| POST | `/api/documents/upload` | 上传文档入库 |
+| POST | `/api/search` | 混合检索 top-k 片段 |
+| POST | `/api/ask` | RAG 问答（返回答案+引用） |
+| GET | `/api/documents/stats` | 知识库统计 |
 
 ---
 
-## 🔮 后续可扩展
-
-- 真实用户体系（JWT 登录态）、多用户独立知识库隔离
-- 分布式限流（Redis 令牌桶）、审计日志
-- 检索召回优化：混合检索（向量 + 关键词 BM25）、重排（rerank）
-- 更多学科/真实校招真题扩充，或切换为团队共享知识库
-- 部署已跑通 Render，可平滑迁移到 Railway / 自建服务器（Docker 镜像通用）
-
----
-
-## 📄 许可证
-
-非商用学习作品（No License / 仅供学习演示）。所使用的智谱模型请遵守其开放平台服务条款。
+非商用学习项目。所调用的大模型服务请遵守对应平台的服务条款。

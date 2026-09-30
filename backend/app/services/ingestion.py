@@ -261,4 +261,7 @@ def ingest_text(text: str, source: str) -> int:
     for p, vec in zip(parsed, vectors):
         p["vector"] = vec
     add_chunks(parsed)
+    # 入库后重建 BM25 索引（混合检索的关键词那一路）
+    from app.services import bm25_index
+    bm25_index.rebuild_index()
     return len(parsed)
